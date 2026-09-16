@@ -168,6 +168,6 @@ func TestServer_LoadConfig(t *testing.T) {
 
 type testGuardrailEvaluator struct{}
 
-func (*testGuardrailEvaluator) Evaluate(context.Context, []byte, GuardrailPhase) (bool, error) {
-	return false, nil
+func (*testGuardrailEvaluator) Evaluate(context.Context, []byte, GuardrailPhase) (GuardrailEvaluationResult, error) {
+	return GuardrailEvaluationResult{}, nil
 }

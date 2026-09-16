@@ -63,6 +63,8 @@ type Guardrail struct {
 	Provider GuardrailProvider `json:"provider"`
 	// Backends scopes this guardrail to generated backend names. Empty means global.
 	Backends []string `json:"backends,omitempty"`
+	// MaxPayloadBytes bounds evaluation and response buffering for this rule.
+	MaxPayloadBytes int64 `json:"maxPayloadBytes,omitempty"`
 }
 
 // GuardrailPhase determines when the rule is evaluated.
@@ -78,6 +80,7 @@ type GuardrailProvider struct {
 	Type               GuardrailProviderType                `json:"type"`
 	Pattern            string                               `json:"pattern,omitempty"`
 	Action             GuardrailAction                      `json:"action,omitempty"`
+	MaskReplacement    string                               `json:"maskReplacement,omitempty"`
 	Message            string                               `json:"message,omitempty"`
 	Presidio           *PresidioGuardrailProvider           `json:"presidio,omitempty"`
 	Bedrock            *BedrockGuardrailProvider            `json:"bedrock,omitempty"`
@@ -133,7 +136,9 @@ const (
 type GuardrailAction string
 
 const (
-	GuardrailActionBlock GuardrailAction = "Block"
+	GuardrailActionBlock   GuardrailAction = "Block"
+	GuardrailActionMonitor GuardrailAction = "Monitor"
+	GuardrailActionMask    GuardrailAction = "Mask"
 )
 
 // Model corresponds to the OpenAI model object in the OpenAI-compatible APIs

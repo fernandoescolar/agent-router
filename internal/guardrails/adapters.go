@@ -26,7 +26,7 @@ func NewEvaluator(ctx context.Context, provider *filterapi.GuardrailProvider) (f
 	client := &http.Client{Timeout: time.Duration(timeoutSeconds(provider.TimeoutSeconds)) * time.Second}
 	switch provider.Type {
 	case filterapi.GuardrailProviderTypePresidio:
-		return newPresidioEvaluator(provider.Presidio, client)
+		return newPresidioEvaluator(provider.Presidio, provider.MaskReplacement, client)
 	case filterapi.GuardrailProviderTypeBedrockGuardrails:
 		return newBedrockEvaluator(ctx, provider.Bedrock, client)
 	case filterapi.GuardrailProviderTypeAzureContentSafety:

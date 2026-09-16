@@ -55,6 +55,22 @@ spec:
             description: GuardrailPolicySpec contains the configured checks attached
               to an AIServiceBackend.
             properties:
+              maxRequestBodyBytes:
+                default: 10485760
+                description: MaxRequestBodyBytes is the largest request body evaluated
+                  by this policy.
+                format: int64
+                maximum: 52428800
+                minimum: 1024
+                type: integer
+              maxResponseBodyBytes:
+                default: 10485760
+                description: MaxResponseBodyBytes is the largest response body buffered
+                  and evaluated by this policy.
+                format: int64
+                maximum: 52428800
+                minimum: 1024
+                type: integer
               rules:
                 description: Rules are executed in order and can evaluate request
                   or response payloads.
@@ -83,6 +99,8 @@ spec:
                             matched.
                           enum:
                           - Block
+                          - Monitor
+                          - Mask
                           type: string
                         azureContentSafety:
                           description: AzureContentSafety configures Azure AI Content
@@ -220,6 +238,11 @@ spec:
                           - FailClosed
                           - FailOpen
                           type: string
+                        maskReplacement:
+                          default: '[REDACTED]'
+                          description: MaskReplacement is used by Regex and Presidio
+                            Mask actions.
+                          type: string
                         message:
                           description: Message is returned to the caller when the
                             rule blocks a request or response.
@@ -322,6 +345,8 @@ spec:
                         rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
                           && has(self.azureContentSafety) && !has(self.presidio) &&
                           !has(self.bedrock))
+                      - message: AzureContentSafety does not support Mask
+                        rule: self.action != 'Mask' || self.type != 'AzureContentSafety'
                   required:
                   - name
                   - phase
@@ -474,6 +499,22 @@ spec:
             description: GuardrailPolicySpec contains the configured checks attached
               to an AIServiceBackend.
             properties:
+              maxRequestBodyBytes:
+                default: 10485760
+                description: MaxRequestBodyBytes is the largest request body evaluated
+                  by this policy.
+                format: int64
+                maximum: 52428800
+                minimum: 1024
+                type: integer
+              maxResponseBodyBytes:
+                default: 10485760
+                description: MaxResponseBodyBytes is the largest response body buffered
+                  and evaluated by this policy.
+                format: int64
+                maximum: 52428800
+                minimum: 1024
+                type: integer
               rules:
                 description: Rules are executed in order and can evaluate request
                   or response payloads.
@@ -502,6 +543,8 @@ spec:
                             matched.
                           enum:
                           - Block
+                          - Monitor
+                          - Mask
                           type: string
                         azureContentSafety:
                           description: AzureContentSafety configures Azure AI Content
@@ -639,6 +682,11 @@ spec:
                           - FailClosed
                           - FailOpen
                           type: string
+                        maskReplacement:
+                          default: '[REDACTED]'
+                          description: MaskReplacement is used by Regex and Presidio
+                            Mask actions.
+                          type: string
                         message:
                           description: Message is returned to the caller when the
                             rule blocks a request or response.
@@ -741,6 +789,8 @@ spec:
                         rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
                           && has(self.azureContentSafety) && !has(self.presidio) &&
                           !has(self.bedrock))
+                      - message: AzureContentSafety does not support Mask
+                        rule: self.action != 'Mask' || self.type != 'AzureContentSafety'
                   required:
                   - name
                   - phase

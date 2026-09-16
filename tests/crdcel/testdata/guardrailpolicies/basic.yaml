@@ -19,7 +19,14 @@ spec:
       provider:
         type: Regex
         pattern: secret
-        action: Block
+        action: Monitor
+    - name: regex-mask
+      phase: Response
+      provider:
+        type: Regex
+        pattern: secret
+        action: Mask
+        maskReplacement: "[FILTERED]"
     - name: presidio
       phase: Request
       provider:

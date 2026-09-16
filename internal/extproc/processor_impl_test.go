@@ -342,6 +342,24 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessResponseHeaders(t *testin
 		require.NoError(t, err)
 		require.Nil(t, res.ModeOverride)
 	})
+	t.Run("streaming with monitor-only response guardrail remains buffered", func(t *testing.T) {
+		inHeaders := &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: ":status", Value: "200"}}}
+		mt := &mockTranslator{t: t, expHeaders: map[string]string{":status": "200"}}
+		p := &chatCompletionProcessorUpstreamFilter{
+			translator: mt,
+			metrics:    &mockMetrics{},
+			parent: &chatCompletionProcessorRouterFilter{
+				stream: true,
+				config: &filterapi.RuntimeConfig{Guardrails: []filterapi.RuntimeGuardrail{{
+					Phase:    filterapi.GuardrailPhaseResponse,
+					Provider: filterapi.GuardrailProvider{Action: filterapi.GuardrailActionMonitor},
+				}}},
+			},
+		}
+		res, err := p.ProcessResponseHeaders(t.Context(), inHeaders)
+		require.NoError(t, err)
+		require.Nil(t, res.ModeOverride)
+	})
 	t.Run("error/streaming", func(t *testing.T) {
 		inHeaders := &corev3.HeaderMap{
 			Headers: []*corev3.HeaderValue{{Key: ":status", Value: "500"}, {Key: "dog", RawValue: []byte("cat")}},

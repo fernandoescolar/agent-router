@@ -81,7 +81,7 @@ func loadAWSCredentials(ctx context.Context, guardrailConfig *filterapi.BedrockG
 	}), nil
 }
 
-func (e *bedrockEvaluator) Evaluate(ctx context.Context, body []byte, phase filterapi.GuardrailPhase) (bool, error) {
+func (e *bedrockEvaluator) Evaluate(ctx context.Context, body []byte, phase filterapi.GuardrailPhase) (filterapi.GuardrailEvaluationResult, error) {
 	source := "INPUT"
 	if phase == filterapi.GuardrailPhaseResponse {
 		source = "OUTPUT"
@@ -101,27 +101,34 @@ func (e *bedrockEvaluator) Evaluate(ctx context.Context, body []byte, phase filt
 		Text string `json:"text"`
 	}{Text: string(body)}}}})
 	if err != nil {
-		return false, err
+		return filterapi.GuardrailEvaluationResult{}, err
 	}
 	endpoint := strings.TrimRight(e.config.Endpoint, "/") + "/guardrail/" + url.PathEscape(e.config.GuardrailIdentifier) + "/version/" + url.PathEscape(e.config.GuardrailVersion) + "/apply"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return false, err
+		return filterapi.GuardrailEvaluationResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	credentials, err := e.credentials.Retrieve(ctx)
 	if err != nil {
-		return false, fmt.Errorf("cannot retrieve AWS credentials: %w", err)
+		return filterapi.GuardrailEvaluationResult{}, fmt.Errorf("cannot retrieve AWS credentials: %w", err)
 	}
 	payloadHash := sha256.Sum256(payload)
 	if err = e.signer.SignHTTP(ctx, credentials, req, hex.EncodeToString(payloadHash[:]), "bedrock", e.config.Region, time.Now()); err != nil {
-		return false, fmt.Errorf("cannot sign Bedrock request: %w", err)
+		return filterapi.GuardrailEvaluationResult{}, fmt.Errorf("cannot sign Bedrock request: %w", err)
 	}
 	result := struct {
-		Action string `json:"action"`
+		Action  string `json:"action"`
+		Outputs []struct {
+			Text string `json:"text"`
+		} `json:"outputs"`
 	}{}
 	if err = sendJSON(req, e.client, &result); err != nil {
-		return false, fmt.Errorf("bedrock ApplyGuardrail request failed: %w", err)
+		return filterapi.GuardrailEvaluationResult{}, fmt.Errorf("bedrock ApplyGuardrail request failed: %w", err)
 	}
-	return result.Action == "GUARDRAIL_INTERVENED", nil
+	evaluation := filterapi.GuardrailEvaluationResult{Matched: result.Action == "GUARDRAIL_INTERVENED"}
+	if len(result.Outputs) > 0 {
+		evaluation.Replacement = []byte(result.Outputs[0].Text)
+	}
+	return evaluation, nil
 }

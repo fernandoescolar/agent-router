@@ -38,7 +38,7 @@ func newAzureContentSafetyEvaluator(config *filterapi.AzureContentSafetyGuardrai
 	return &azureContentSafetyEvaluator{config: &configCopy, client: client}, nil
 }
 
-func (e *azureContentSafetyEvaluator) Evaluate(ctx context.Context, body []byte, _ filterapi.GuardrailPhase) (bool, error) {
+func (e *azureContentSafetyEvaluator) Evaluate(ctx context.Context, body []byte, _ filterapi.GuardrailPhase) (filterapi.GuardrailEvaluationResult, error) {
 	payload := struct {
 		Text string `json:"text"`
 	}{Text: string(body)}
@@ -51,12 +51,12 @@ func (e *azureContentSafetyEvaluator) Evaluate(ctx context.Context, body []byte,
 	if err := doJSON(ctx, e.client, http.MethodPost, endpoint, payload, func(req *http.Request) {
 		req.Header.Set("Ocp-Apim-Subscription-Key", e.config.APIKey)
 	}, &result); err != nil {
-		return false, fmt.Errorf("azure Content Safety analyze request failed: %w", err)
+		return filterapi.GuardrailEvaluationResult{}, fmt.Errorf("azure Content Safety analyze request failed: %w", err)
 	}
 	for _, category := range result.CategoriesAnalysis {
 		if category.Severity >= *e.config.SeverityThreshold {
-			return true, nil
+			return filterapi.GuardrailEvaluationResult{Matched: true}, nil
 		}
 	}
-	return false, nil
+	return filterapi.GuardrailEvaluationResult{}, nil
 }
