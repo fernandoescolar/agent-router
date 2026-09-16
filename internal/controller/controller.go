@@ -258,6 +258,13 @@ func StartControllers(ctx context.Context, mgr manager.Manager, config *rest.Con
 		}
 	}
 
+	guardrailPolicyC := NewGuardrailPolicyController(c, kube, logger.WithName("guardrail-policy"), aiGatewayRouteEventChan)
+	if err = TypedControllerBuilderForCRD(mgr, &aigv1b1.GuardrailPolicy{}).
+		Watches(&aigv1b1.AIServiceBackend{}, handler.EnqueueRequestsFromMapFunc(guardrailPolicyC.BackendToGuardrailPolicy)).
+		Complete(guardrailPolicyC); err != nil {
+		return fmt.Errorf("failed to create controller for GuardrailPolicy: %w", err)
+	}
+
 	// ReferenceGrant controller for cross-namespace access validation
 	referenceGrantC := NewReferenceGrantController(c, logger.WithName("reference-grant"), aiGatewayRouteEventChan)
 	if err = TypedControllerBuilderForCRD(mgr, &gwapiv1b1.ReferenceGrant{}).
@@ -312,6 +319,9 @@ const (
 	// k8sClientIndexAIServiceBackendToTargetingQuotaPolicy is the index name that maps from an AIServiceBackend
 	// to the QuotaPolicy whose targetRefs contains the AIServiceBackend.
 	k8sClientIndexAIServiceBackendToTargetingQuotaPolicy = "AIServiceBackendToTargetingQuotaPolicy"
+	// k8sClientIndexAIServiceBackendToTargetingGuardrailPolicy is the index name that maps from an AIServiceBackend
+	// to the GuardrailPolicy whose targetRefs contains the AIServiceBackend.
+	k8sClientIndexAIServiceBackendToTargetingGuardrailPolicy = "AIServiceBackendToTargetingGuardrailPolicy"
 	// k8sClientIndexGatewayToGatewayConfig maps from a GatewayConfig name to Gateways referencing it.
 	k8sClientIndexGatewayToGatewayConfig = "GatewayToGatewayConfig"
 
@@ -359,6 +369,12 @@ func ApplyIndexing(ctx context.Context, indexer func(ctx context.Context, obj cl
 		k8sClientIndexAIServiceBackendToTargetingQuotaPolicy, quotaPolicyTargetRefsIndexFunc)
 	if err != nil {
 		return fmt.Errorf("failed to index field for QuotaPolicy targetRefs: %w", err)
+	}
+
+	err = indexer(ctx, &aigv1b1.GuardrailPolicy{},
+		k8sClientIndexAIServiceBackendToTargetingGuardrailPolicy, guardrailPolicyTargetRefsIndexFunc)
+	if err != nil {
+		return fmt.Errorf("failed to index field for GuardrailPolicy targetRefs: %w", err)
 	}
 
 	err = indexer(ctx, &gwapiv1.Gateway{},
@@ -519,6 +535,15 @@ func quotaPolicyTargetRefsIndexFunc(o client.Object) []string {
 	var ret []string
 	for _, targetRef := range quotaPolicy.Spec.TargetRefs {
 		ret = append(ret, fmt.Sprintf("%s.%s", targetRef.Name, quotaPolicy.Namespace))
+	}
+	return ret
+}
+
+func guardrailPolicyTargetRefsIndexFunc(o client.Object) []string {
+	guardrailPolicy := o.(*aigv1b1.GuardrailPolicy)
+	var ret []string
+	for _, targetRef := range guardrailPolicy.Spec.TargetRefs {
+		ret = append(ret, fmt.Sprintf("%s.%s", targetRef.Name, guardrailPolicy.Namespace))
 	}
 	return ret
 }
