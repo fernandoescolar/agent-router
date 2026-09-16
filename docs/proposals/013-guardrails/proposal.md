@@ -200,7 +200,7 @@ A provider error under `FailClosed` prevents unchecked traffic. A provider error
 
 ### Streaming Responses
 
-A response cannot be safely blocked after bytes have already reached the client. When any applicable response rule can block, ext-proc must keep response-body processing buffered. Only routes without applicable blocking response rules may switch to streamed response processing.
+A response cannot be safely blocked or rewritten after bytes have already reached the client. When any applicable response rule is configured, ext-proc must keep response-body processing buffered. Only routes without applicable response guardrails may switch to streamed response processing.
 
 This increases latency and memory use for guarded streaming responses. All response rules, including Monitor, use buffering so providers receive a complete semantic payload rather than partial SSE events. Each policy defaults to a 10 MiB response evaluation limit and may configure up to 50 MiB, matching the Envoy per-connection buffer ceiling. The limit is checked before provider evaluation; exceeding it follows the rule's failure mode.
 
@@ -236,7 +236,7 @@ spec:
           scoreThresholdPercent: 70
 ```
 
-Rules have stable unique names and execute in order. The initial action is `Block`. The API reserves room for additional actions without forcing all providers to support identical capabilities.
+Rules have stable unique names and execute in order. The default action is `Block`; users may explicitly select `Monitor` or `Mask` when the provider supports it. The API reserves room for additional actions without forcing all providers to support identical capabilities.
 
 ### Provider Configuration
 
@@ -371,7 +371,7 @@ The runtime emits:
 - `aigateway.guardrail.evaluation.count` with phase and result attributes; and
 - `guardrail.evaluation` span events with rule name, phase, and result.
 
-Metric attributes intentionally exclude rule names and error text to avoid unbounded cardinality. Result values are `allowed`, `blocked`, and `error`. Provider type may be added because it is bounded, subject to consistency with the project's metric conventions.
+Metric attributes intentionally exclude rule names and error text to avoid unbounded cardinality. Result values are `allowed`, `blocked`, `monitored`, `masked`, and `error`. Provider type may be added because it is bounded, subject to consistency with the project's metric conventions.
 
 The design should also expose provider-call latency in a future histogram so operators can measure the cost of each external integration.
 
