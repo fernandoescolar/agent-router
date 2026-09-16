@@ -64,6 +64,7 @@ spec:
                   properties:
                     name:
                       description: Name is a stable identifier for the rule.
+                      maxLength: 63
                       minLength: 1
                       type: string
                     phase:
@@ -80,6 +81,144 @@ spec:
                           default: Block
                           description: Action is the action taken when the rule is
                             matched.
+                          enum:
+                          - Block
+                          type: string
+                        azureContentSafety:
+                          description: AzureContentSafety configures Azure AI Content
+                            Safety.
+                          properties:
+                            apiKeySecretRef:
+                              description: APIKeySecretRef references a Secret whose
+                                apiKey entry is sent to Azure.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            apiVersion:
+                              default: "2024-09-01"
+                              type: string
+                            endpoint:
+                              format: uri
+                              type: string
+                            severityThreshold:
+                              format: int32
+                              maximum: 7
+                              minimum: 0
+                              type: integer
+                          required:
+                          - apiKeySecretRef
+                          - endpoint
+                          type: object
+                        bedrock:
+                          description: Bedrock configures AWS Bedrock Guardrails.
+                          properties:
+                            credentialsSecretRef:
+                              description: CredentialsSecretRef optionally references
+                                a Secret whose credentials entry contains an AWS shared
+                                credentials file.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              description: Endpoint overrides the Bedrock runtime
+                                endpoint, primarily for private endpoints and testing.
+                              format: uri
+                              type: string
+                            guardrailIdentifier:
+                              minLength: 1
+                              type: string
+                            guardrailVersion:
+                              minLength: 1
+                              type: string
+                            region:
+                              minLength: 1
+                              type: string
+                          required:
+                          - guardrailIdentifier
+                          - guardrailVersion
+                          - region
+                          type: object
+                        failureMode:
+                          default: FailClosed
+                          description: FailureMode determines whether provider errors
+                            block or allow the request.
+                          enum:
+                          - FailClosed
+                          - FailOpen
                           type: string
                         message:
                           description: Message is returned to the caller when the
@@ -89,6 +228,74 @@ spec:
                           description: Pattern is used for deterministic regex-based
                             evaluations.
                           type: string
+                        presidio:
+                          description: Presidio configures the Presidio analyzer provider.
+                          properties:
+                            apiKeySecretRef:
+                              description: APIKeySecretRef optionally references a
+                                Secret whose apiKey entry is sent as a Bearer token.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              format: uri
+                              type: string
+                            language:
+                              default: en
+                              type: string
+                            scoreThresholdPercent:
+                              format: int32
+                              maximum: 100
+                              minimum: 0
+                              type: integer
+                          required:
+                          - endpoint
+                          type: object
+                        timeoutSeconds:
+                          default: 10
+                          description: TimeoutSeconds limits each external provider
+                            evaluation.
+                          format: int32
+                          maximum: 60
+                          minimum: 1
+                          type: integer
                         type:
                           description: Type identifies the guardrail implementation.
                           enum:
@@ -100,13 +307,32 @@ spec:
                       required:
                       - type
                       type: object
+                      x-kubernetes-validations:
+                      - message: Regex requires pattern and no external provider configuration
+                        rule: self.type != 'Regex' || (has(self.pattern) && self.pattern
+                          != ” && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
+                      - message: Presidio requires only presidio provider configuration
+                        rule: self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio)
+                          && !has(self.bedrock) && !has(self.azureContentSafety))
+                      - message: Bedrock requires only bedrock provider configuration
+                        rule: self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock)
+                          && !has(self.presidio) && !has(self.azureContentSafety))
+                      - message: AzureContentSafety requires only azureContentSafety
+                          provider configuration
+                        rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
+                          && has(self.azureContentSafety) && !has(self.presidio) &&
+                          !has(self.bedrock))
                   required:
                   - name
                   - phase
                   - provider
                   type: object
                 maxItems: 32
+                minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: rule name must be unique within the policy
+                  rule: self.all(rule, self.exists_one(other, other.name == rule.name))
               targetRefs:
                 description: TargetRefs are the names of the AIServiceBackend resources
                   this GuardrailPolicy is attached to.
@@ -140,6 +366,7 @@ spec:
                   - name
                   type: object
                 maxItems: 16
+                minItems: 1
                 type: array
                 x-kubernetes-validations:
                 - message: targetRefs must reference AIServiceBackend resources
@@ -256,6 +483,7 @@ spec:
                   properties:
                     name:
                       description: Name is a stable identifier for the rule.
+                      maxLength: 63
                       minLength: 1
                       type: string
                     phase:
@@ -272,6 +500,144 @@ spec:
                           default: Block
                           description: Action is the action taken when the rule is
                             matched.
+                          enum:
+                          - Block
+                          type: string
+                        azureContentSafety:
+                          description: AzureContentSafety configures Azure AI Content
+                            Safety.
+                          properties:
+                            apiKeySecretRef:
+                              description: APIKeySecretRef references a Secret whose
+                                apiKey entry is sent to Azure.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            apiVersion:
+                              default: "2024-09-01"
+                              type: string
+                            endpoint:
+                              format: uri
+                              type: string
+                            severityThreshold:
+                              format: int32
+                              maximum: 7
+                              minimum: 0
+                              type: integer
+                          required:
+                          - apiKeySecretRef
+                          - endpoint
+                          type: object
+                        bedrock:
+                          description: Bedrock configures AWS Bedrock Guardrails.
+                          properties:
+                            credentialsSecretRef:
+                              description: CredentialsSecretRef optionally references
+                                a Secret whose credentials entry contains an AWS shared
+                                credentials file.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              description: Endpoint overrides the Bedrock runtime
+                                endpoint, primarily for private endpoints and testing.
+                              format: uri
+                              type: string
+                            guardrailIdentifier:
+                              minLength: 1
+                              type: string
+                            guardrailVersion:
+                              minLength: 1
+                              type: string
+                            region:
+                              minLength: 1
+                              type: string
+                          required:
+                          - guardrailIdentifier
+                          - guardrailVersion
+                          - region
+                          type: object
+                        failureMode:
+                          default: FailClosed
+                          description: FailureMode determines whether provider errors
+                            block or allow the request.
+                          enum:
+                          - FailClosed
+                          - FailOpen
                           type: string
                         message:
                           description: Message is returned to the caller when the
@@ -281,6 +647,74 @@ spec:
                           description: Pattern is used for deterministic regex-based
                             evaluations.
                           type: string
+                        presidio:
+                          description: Presidio configures the Presidio analyzer provider.
+                          properties:
+                            apiKeySecretRef:
+                              description: APIKeySecretRef optionally references a
+                                Secret whose apiKey entry is sent as a Bearer token.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              format: uri
+                              type: string
+                            language:
+                              default: en
+                              type: string
+                            scoreThresholdPercent:
+                              format: int32
+                              maximum: 100
+                              minimum: 0
+                              type: integer
+                          required:
+                          - endpoint
+                          type: object
+                        timeoutSeconds:
+                          default: 10
+                          description: TimeoutSeconds limits each external provider
+                            evaluation.
+                          format: int32
+                          maximum: 60
+                          minimum: 1
+                          type: integer
                         type:
                           description: Type identifies the guardrail implementation.
                           enum:
@@ -292,13 +726,32 @@ spec:
                       required:
                       - type
                       type: object
+                      x-kubernetes-validations:
+                      - message: Regex requires pattern and no external provider configuration
+                        rule: self.type != 'Regex' || (has(self.pattern) && self.pattern
+                          != ” && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
+                      - message: Presidio requires only presidio provider configuration
+                        rule: self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio)
+                          && !has(self.bedrock) && !has(self.azureContentSafety))
+                      - message: Bedrock requires only bedrock provider configuration
+                        rule: self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock)
+                          && !has(self.presidio) && !has(self.azureContentSafety))
+                      - message: AzureContentSafety requires only azureContentSafety
+                          provider configuration
+                        rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
+                          && has(self.azureContentSafety) && !has(self.presidio) &&
+                          !has(self.bedrock))
                   required:
                   - name
                   - phase
                   - provider
                   type: object
                 maxItems: 32
+                minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: rule name must be unique within the policy
+                  rule: self.all(rule, self.exists_one(other, other.name == rule.name))
               targetRefs:
                 description: TargetRefs are the names of the AIServiceBackend resources
                   this GuardrailPolicy is attached to.
@@ -332,6 +785,7 @@ spec:
                   - name
                   type: object
                 maxItems: 16
+                minItems: 1
                 type: array
                 x-kubernetes-validations:
                 - message: targetRefs must reference AIServiceBackend resources

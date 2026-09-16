@@ -61,6 +61,8 @@ type Guardrail struct {
 	Name     string            `json:"name"`
 	Phase    GuardrailPhase    `json:"phase"`
 	Provider GuardrailProvider `json:"provider"`
+	// Backends scopes this guardrail to generated backend names. Empty means global.
+	Backends []string `json:"backends,omitempty"`
 }
 
 // GuardrailPhase determines when the rule is evaluated.
@@ -73,10 +75,48 @@ const (
 
 // GuardrailProvider describes the implementation used to evaluate a guardrail.
 type GuardrailProvider struct {
-	Type    GuardrailProviderType `json:"type"`
-	Pattern string                `json:"pattern,omitempty"`
-	Action  GuardrailAction       `json:"action,omitempty"`
-	Message string                `json:"message,omitempty"`
+	Type               GuardrailProviderType                `json:"type"`
+	Pattern            string                               `json:"pattern,omitempty"`
+	Action             GuardrailAction                      `json:"action,omitempty"`
+	Message            string                               `json:"message,omitempty"`
+	Presidio           *PresidioGuardrailProvider           `json:"presidio,omitempty"`
+	Bedrock            *BedrockGuardrailProvider            `json:"bedrock,omitempty"`
+	AzureContentSafety *AzureContentSafetyGuardrailProvider `json:"azureContentSafety,omitempty"`
+	TimeoutSeconds     int32                                `json:"timeoutSeconds,omitempty"`
+	FailureMode        GuardrailFailureMode                 `json:"failureMode,omitempty"`
+}
+
+// GuardrailFailureMode determines how external provider failures are handled.
+type GuardrailFailureMode string
+
+const (
+	GuardrailFailureModeFailClosed GuardrailFailureMode = "FailClosed"
+	GuardrailFailureModeFailOpen   GuardrailFailureMode = "FailOpen"
+)
+
+// PresidioGuardrailProvider configures a Presidio analyzer request.
+type PresidioGuardrailProvider struct {
+	Endpoint              string `json:"endpoint"`
+	Language              string `json:"language,omitempty"`
+	ScoreThresholdPercent int32  `json:"scoreThresholdPercent,omitempty"`
+	APIKey                string `json:"apiKey,omitempty"`
+}
+
+// BedrockGuardrailProvider configures an AWS Bedrock ApplyGuardrail request.
+type BedrockGuardrailProvider struct {
+	Endpoint              string `json:"endpoint,omitempty"`
+	Region                string `json:"region"`
+	GuardrailIdentifier   string `json:"guardrailIdentifier"`
+	GuardrailVersion      string `json:"guardrailVersion"`
+	CredentialFileLiteral string `json:"credentialFileLiteral,omitempty"`
+}
+
+// AzureContentSafetyGuardrailProvider configures an Azure AI Content Safety request.
+type AzureContentSafetyGuardrailProvider struct {
+	Endpoint          string `json:"endpoint"`
+	APIVersion        string `json:"apiVersion,omitempty"`
+	SeverityThreshold *int32 `json:"severityThreshold,omitempty"`
+	APIKey            string `json:"apiKey"`
 }
 
 // GuardrailProviderType identifies a guardrail implementation.
