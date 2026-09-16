@@ -58,13 +58,14 @@ var LogRequestHeaderAttributes map[string]string
 // * ProcessorFactory: A factory function to create processors based on the configuration.
 func NewFactory[ReqT any, RespT any, RespChunkT any, EndpointSpecT endpointspec.Spec[ReqT, RespT, RespChunkT]](
 	f metrics.Factory,
+	guardrailMetrics metrics.GuardrailMetrics,
 	tracer tracingapi.RequestTracer[ReqT, RespT, RespChunkT],
 	_ EndpointSpecT, // This is a type marker to bind EndpointSpecT without specifying ReqT, RespT, RespChunkT explicitly.
 ) ProcessorFactory {
 	return func(config *filterapi.RuntimeConfig, requestHeaders map[string]string, logger *slog.Logger, isUpstreamFilter bool, enableRedaction bool) (Processor, error) {
 		logger = logger.With("isUpstreamFilter", fmt.Sprintf("%v", isUpstreamFilter))
 		if !isUpstreamFilter {
-			return newRouterProcessor[ReqT, RespT, RespChunkT, EndpointSpecT](config, requestHeaders, logger, tracer, enableRedaction), nil
+			return newRouterProcessor[ReqT, RespT, RespChunkT, EndpointSpecT](config, requestHeaders, logger, guardrailMetrics, tracer, enableRedaction), nil
 		}
 		return newUpstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT](requestHeaders, f.NewMetrics(), logger), nil
 	}
@@ -96,6 +97,8 @@ type (
 		forceBodyMutation      bool
 		// tracer is the tracer used for requests.
 		tracer tracingapi.RequestTracer[ReqT, RespT, RespChunkT]
+		// guardrailMetrics records guardrail evaluation outcomes.
+		guardrailMetrics metrics.GuardrailMetrics
 		// span is the tracing span for this request, created in ProcessRequestBody.
 		span tracingapi.Span[RespT, RespChunkT]
 		// upstreamFilterCount is the number of upstream filters that have been processed.
@@ -139,6 +142,7 @@ func newRouterProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspec.
 	config *filterapi.RuntimeConfig,
 	requestHeaders map[string]string,
 	logger *slog.Logger,
+	guardrailMetrics metrics.GuardrailMetrics,
 	tracer tracingapi.RequestTracer[ReqT, RespT, RespChunkT],
 	enableRedaction bool,
 ) *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT] {
@@ -147,11 +151,23 @@ func newRouterProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspec.
 		config:            config,
 		requestHeaders:    requestHeaders,
 		logger:            logger,
+		guardrailMetrics:  guardrailMetrics,
 		tracer:            tracer,
 		forceBodyMutation: false,
 		debugLogEnabled:   debugLogEnabled,
 		enableRedaction:   enableRedaction,
 	}
+}
+
+func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) recordGuardrailEvaluation(
+	ctx context.Context,
+	phase filterapi.GuardrailPhase,
+	result metrics.GuardrailResult,
+) {
+	if r.guardrailMetrics == nil || !guardrailsConfiguredForPhase(r.config.Guardrails, phase) {
+		return
+	}
+	r.guardrailMetrics.RecordEvaluation(ctx, string(phase), result)
 }
 
 func newUpstreamProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspec.Spec[ReqT, RespT, RespChunkT]](
@@ -253,10 +269,16 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
 	if violation, err := evaluateRequestGuardrails(r.config.Guardrails, rawBody.Body); err != nil {
+		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError)
 		return nil, fmt.Errorf("failed to evaluate request guardrails: %w", err)
 	} else if violation != nil {
+		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked)
+		r.logger.Warn("request blocked by guardrail",
+			slog.String("guardrail.name", violation.Name),
+			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseRequest)))
 		return createUserFacingErrorResponse(400, "BadRequest", violation.Message), nil
 	}
+	r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
 
 	// Use the request-scoped logger from context if available, otherwise fall back to processor logger
 	logger := loggerFromContext(ctx)
@@ -624,10 +646,16 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 	u.costs.Override(tokenUsage)
 
 	if violation, err := evaluateResponseGuardrails(u.parent.config.Guardrails, body.Body); err != nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError)
 		return nil, fmt.Errorf("failed to evaluate response guardrails: %w", err)
 	} else if violation != nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked)
+		u.logger.Warn("response blocked by guardrail",
+			slog.String("guardrail.name", violation.Name),
+			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseResponse)))
 		return u.respondLocally(ctx, 400, "BadRequest", violation.Message), nil
 	}
+	u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed)
 
 	// Set the response model for metrics
 	u.metrics.SetResponseModel(responseModel)
