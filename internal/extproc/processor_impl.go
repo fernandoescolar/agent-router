@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -163,11 +164,19 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) recordGuardrai
 	ctx context.Context,
 	phase filterapi.GuardrailPhase,
 	result metrics.GuardrailResult,
+	backendName string,
+	includeGlobal bool,
 ) {
-	if r.guardrailMetrics == nil || !guardrailsConfiguredForPhase(r.config.Guardrails, phase) {
+	if r.guardrailMetrics == nil || r.config == nil || !guardrailsConfiguredForPhase(r.config.Guardrails, phase, backendName, includeGlobal) {
 		return
 	}
 	r.guardrailMetrics.RecordEvaluation(ctx, string(phase), result)
+}
+
+func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) recordGuardrailTrace(name string, phase filterapi.GuardrailPhase, result metrics.GuardrailResult) {
+	if span, ok := r.span.(tracingapi.GuardrailSpan); ok {
+		span.RecordGuardrail(name, string(phase), string(result))
+	}
 }
 
 func newUpstreamProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspec.Spec[ReqT, RespT, RespChunkT]](
@@ -228,6 +237,10 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) respondLocal
 // createUserFacingErrorResponse creates an ImmediateResponse for user-facing errors with JSON body.
 func createUserFacingErrorResponse(statusCode int, errorType string, message string) *extprocv3.ProcessingResponse {
 	body := formatUserFacingErrorJSON(errorType, statusCode, message)
+	grpcStatus := codes.InvalidArgument
+	if statusCode == http.StatusForbidden {
+		grpcStatus = codes.PermissionDenied
+	}
 	headerMutation := &extprocv3.HeaderMutation{}
 	setHeader(headerMutation, "content-type", "application/json")
 	setHeader(headerMutation, "content-length", strconv.Itoa(len(body)))
@@ -238,7 +251,7 @@ func createUserFacingErrorResponse(statusCode int, errorType string, message str
 				Status:     &typev3.HttpStatus{Code: typev3.StatusCode(statusCode)}, // #nosec G115 - HTTP status codes are always in valid int32 range
 				Headers:    headerMutation,
 				Body:       body,
-				GrpcStatus: &extprocv3.GrpcStatus{Status: uint32(codes.InvalidArgument)},
+				GrpcStatus: &extprocv3.GrpcStatus{Status: uint32(grpcStatus)},
 			},
 		},
 	}
@@ -268,18 +281,6 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		}
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
-	if violation, err := evaluateRequestGuardrails(r.config.Guardrails, rawBody.Body); err != nil {
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError)
-		return nil, fmt.Errorf("failed to evaluate request guardrails: %w", err)
-	} else if violation != nil {
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked)
-		r.logger.Warn("request blocked by guardrail",
-			slog.String("guardrail.name", violation.Name),
-			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseRequest)))
-		return createUserFacingErrorResponse(400, "BadRequest", violation.Message), nil
-	}
-	r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
-
 	// Use the request-scoped logger from context if available, otherwise fall back to processor logger
 	logger := loggerFromContext(ctx)
 	if logger == nil {
@@ -345,6 +346,30 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		body,
 		rawBody.Body,
 	)
+	violation, guardrailErr := evaluateRequestGuardrails(ctx, r.config.Guardrails, rawBody.Body)
+	if guardrailErr != nil {
+		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError, "", true)
+		r.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError)
+		if !isGuardrailFailOpenError(guardrailErr) {
+			return nil, fmt.Errorf("failed to evaluate request guardrails: %w", guardrailErr)
+		}
+		r.logger.Warn("request guardrail provider failed open", slog.String("error", guardrailErr.Error()))
+	} else if violation != nil {
+		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked, "", true)
+		r.recordGuardrailTrace(violation.Name, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked)
+		r.logger.Warn("request blocked by guardrail",
+			slog.String("guardrail.name", violation.Name),
+			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseRequest)))
+		response := createUserFacingErrorResponse(http.StatusForbidden, "GuardrailViolation", violation.Message)
+		if r.span != nil {
+			r.span.EndSpanOnError(http.StatusForbidden, response.GetImmediateResponse().GetBody())
+		}
+		return response, nil
+	}
+	if guardrailErr == nil {
+		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
+		r.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
+	}
 
 	return &extprocv3.ProcessingResponse{
 		Response: &extprocv3.ProcessingResponse_RequestBody{
@@ -382,6 +407,28 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 	// Set the request model for metrics from the original model or override if applied.
 	reqModel := cmp.Or(u.requestHeaders[internalapi.ModelNameHeaderKeyDefault], u.parent.originalModel)
 	u.metrics.SetRequestModel(reqModel)
+	var configuredGuardrails []filterapi.RuntimeGuardrail
+	if u.parent.config != nil {
+		configuredGuardrails = u.parent.config.Guardrails
+	}
+	violation, guardrailErr := evaluateBackendRequestGuardrails(ctx, configuredGuardrails, u.parent.originalRequestBodyRaw, u.backendName)
+	if guardrailErr != nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError, u.backendName, false)
+		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError)
+		if !isGuardrailFailOpenError(guardrailErr) {
+			return nil, fmt.Errorf("failed to evaluate backend request guardrails: %w", guardrailErr)
+		}
+		u.logger.Warn("request guardrail provider failed open", slog.String("error", guardrailErr.Error()))
+	} else if violation != nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked, u.backendName, false)
+		u.parent.recordGuardrailTrace(violation.Name, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked)
+		u.logger.Warn("request blocked by guardrail", slog.String("guardrail.name", violation.Name), slog.String("guardrail.phase", string(filterapi.GuardrailPhaseRequest)))
+		return u.respondLocally(ctx, http.StatusForbidden, "GuardrailViolation", violation.Message), nil
+	}
+	if guardrailErr == nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, u.backendName, false)
+		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
+	}
 
 	// We force the body mutation in the following cases:
 	// * The request is a retry request because the body mutation might have happened the previous iteration.
@@ -533,7 +580,9 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 		return nil, fmt.Errorf("failed to transform response headers: %w", err)
 	}
 	var mode *extprocv3http.ProcessingMode
-	if u.parent.stream && u.responseHeaders[":status"] == "200" {
+	hasResponseGuardrails := u.parent.config != nil && guardrailsConfiguredForPhase(
+		u.parent.config.Guardrails, filterapi.GuardrailPhaseResponse, u.backendName, true)
+	if u.parent.stream && u.responseHeaders[":status"] == "200" && !hasResponseGuardrails {
 		// We only stream the response if the status code is 200 and the response is a stream.
 		mode = &extprocv3http.ProcessingMode{ResponseBodyMode: extprocv3http.ProcessingMode_STREAMED}
 	}
@@ -645,17 +694,26 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 	// Translator reports the latest cumulative token usage which we use to override existing costs.
 	u.costs.Override(tokenUsage)
 
-	if violation, err := evaluateResponseGuardrails(u.parent.config.Guardrails, body.Body); err != nil {
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError)
-		return nil, fmt.Errorf("failed to evaluate response guardrails: %w", err)
+	violation, guardrailErr := evaluateResponseGuardrails(ctx, u.parent.config.Guardrails, body.Body, u.backendName)
+	if guardrailErr != nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError, u.backendName, true)
+		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError)
+		if !isGuardrailFailOpenError(guardrailErr) {
+			return nil, fmt.Errorf("failed to evaluate response guardrails: %w", guardrailErr)
+		}
+		u.logger.Warn("response guardrail provider failed open", slog.String("error", guardrailErr.Error()))
 	} else if violation != nil {
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked)
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked, u.backendName, true)
+		u.parent.recordGuardrailTrace(violation.Name, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked)
 		u.logger.Warn("response blocked by guardrail",
 			slog.String("guardrail.name", violation.Name),
 			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseResponse)))
-		return u.respondLocally(ctx, 400, "BadRequest", violation.Message), nil
+		return u.respondLocally(ctx, http.StatusForbidden, "GuardrailViolation", violation.Message), nil
 	}
-	u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed)
+	if guardrailErr == nil {
+		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed, u.backendName, true)
+		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed)
+	}
 
 	// Set the response model for metrics
 	u.metrics.SetResponseModel(responseModel)

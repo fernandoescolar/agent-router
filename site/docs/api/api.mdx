@@ -649,6 +649,7 @@ QuotaPolicyList contains a list of QuotaPolicy
 - [APISchema](#github-com-envoyproxy-ai-gateway-api-v1alpha1-apischema)
 - [AWSCredentialsFile](#github-com-envoyproxy-ai-gateway-api-v1alpha1-awscredentialsfile)
 - [AWSOIDCExchangeToken](#github-com-envoyproxy-ai-gateway-api-v1alpha1-awsoidcexchangetoken)
+- [AzureContentSafetyGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-azurecontentsafetyguardrailprovider)
 - [AzureOIDCExchangeToken](#github-com-envoyproxy-ai-gateway-api-v1alpha1-azureoidcexchangetoken)
 - [BackendSecurityPolicyAPIKey](#github-com-envoyproxy-ai-gateway-api-v1alpha1-backendsecuritypolicyapikey)
 - [BackendSecurityPolicyAWSCredentials](#github-com-envoyproxy-ai-gateway-api-v1alpha1-backendsecuritypolicyawscredentials)
@@ -660,6 +661,7 @@ QuotaPolicyList contains a list of QuotaPolicy
 - [BackendSecurityPolicySpec](#github-com-envoyproxy-ai-gateway-api-v1alpha1-backendsecuritypolicyspec)
 - [BackendSecurityPolicyStatus](#github-com-envoyproxy-ai-gateway-api-v1alpha1-backendsecuritypolicystatus)
 - [BackendSecurityPolicyType](#github-com-envoyproxy-ai-gateway-api-v1alpha1-backendsecuritypolicytype)
+- [BedrockGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-bedrockguardrailprovider)
 - [GCPCredentialsFile](#github-com-envoyproxy-ai-gateway-api-v1alpha1-gcpcredentialsfile)
 - [GCPOIDCExchangeToken](#github-com-envoyproxy-ai-gateway-api-v1alpha1-gcpoidcexchangetoken)
 - [GCPServiceAccountImpersonationConfig](#github-com-envoyproxy-ai-gateway-api-v1alpha1-gcpserviceaccountimpersonationconfig)
@@ -670,6 +672,7 @@ QuotaPolicyList contains a list of QuotaPolicy
 - [GatewayConfigSpec](#github-com-envoyproxy-ai-gateway-api-v1alpha1-gatewayconfigspec)
 - [GatewayConfigStatus](#github-com-envoyproxy-ai-gateway-api-v1alpha1-gatewayconfigstatus)
 - [GuardrailAction](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailaction)
+- [GuardrailFailureMode](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailfailuremode)
 - [GuardrailPhase](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailphase)
 - [GuardrailPolicySpec](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailpolicyspec)
 - [GuardrailPolicyStatus](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailpolicystatus)
@@ -700,6 +703,7 @@ QuotaPolicyList contains a list of QuotaPolicy
 - [MCPRouteStatus](#github-com-envoyproxy-ai-gateway-api-v1alpha1-mcproutestatus)
 - [MCPToolFilter](#github-com-envoyproxy-ai-gateway-api-v1alpha1-mcptoolfilter)
 - [PerModelQuota](#github-com-envoyproxy-ai-gateway-api-v1alpha1-permodelquota)
+- [PresidioGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-presidioguardrailprovider)
 - [ProtectedResourceMetadata](#github-com-envoyproxy-ai-gateway-api-v1alpha1-protectedresourcemetadata)
 - [QuotaBucketMode](#github-com-envoyproxy-ai-gateway-api-v1alpha1-quotabucketmode)
 - [QuotaDefinition](#github-com-envoyproxy-ai-gateway-api-v1alpha1-quotadefinition)
@@ -1088,6 +1092,43 @@ and store them in a temporary credentials file.
 />
 
 
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-azurecontentsafetyguardrailprovider">AzureContentSafetyGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailprovider)
+
+AzureContentSafetyGuardrailProvider configures calls to Azure AI Content Safety.
+
+##### Fields
+
+
+
+<ApiField
+  name="endpoint"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="apiVersion"
+  type="string"
+  required="false"
+  defaultValue="2024-09-01"
+  description=""
+/><ApiField
+  name="severityThreshold"
+  type="integer"
+  required="false"
+  description=""
+/><ApiField
+  name="apiKeySecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="true"
+  description="APIKeySecretRef references a Secret whose apiKey entry is sent to Azure."
+/>
+
+
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-azureoidcexchangetoken">AzureOIDCExchangeToken</a>
 
 
@@ -1459,6 +1500,47 @@ BackendSecurityPolicyType specifies the type of auth mechanism used to access a 
   required="false"
   description=""
 />
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-bedrockguardrailprovider">BedrockGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailprovider)
+
+BedrockGuardrailProvider configures calls to the AWS Bedrock ApplyGuardrail API.
+
+##### Fields
+
+
+
+<ApiField
+  name="region"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="guardrailIdentifier"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="guardrailVersion"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="endpoint"
+  type="string"
+  required="false"
+  description="Endpoint overrides the Bedrock runtime endpoint, primarily for private endpoints and testing."
+/><ApiField
+  name="credentialsSecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="false"
+  description="CredentialsSecretRef optionally references a Secret whose credentials entry contains an AWS shared credentials file."
+/>
+
+
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-gcpcredentialsfile">GCPCredentialsFile</a>
 
 
@@ -1687,6 +1769,30 @@ GuardrailAction defines the safeguard action.
   required="false"
   description=""
 />
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailfailuremode">GuardrailFailureMode</a>
+
+**Underlying type:** string
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailprovider)
+
+GuardrailFailureMode defines behavior when an external provider cannot evaluate content.
+
+
+
+##### Possible Values
+
+<ApiField
+  name="FailClosed"
+  type="enum"
+  required="false"
+  description=""
+/><ApiField
+  name="FailOpen"
+  type="enum"
+  required="false"
+  description=""
+/>
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailphase">GuardrailPhase</a>
 
 **Underlying type:** string
@@ -1727,12 +1833,12 @@ GuardrailPolicySpec contains the configured checks attached to an AIServiceBacke
 <ApiField
   name="targetRefs"
   type="[LocalPolicyTargetReference](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1alpha2.LocalPolicyTargetReference) array"
-  required="false"
+  required="true"
   description="TargetRefs are the names of the AIServiceBackend resources this GuardrailPolicy is attached to."
 /><ApiField
   name="rules"
   type="[GuardrailRule](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailrule) array"
-  required="false"
+  required="true"
   description="Rules are executed in order and can evaluate request or response payloads."
 />
 
@@ -1792,6 +1898,33 @@ GuardrailProvider describes the implementation used to evaluate a rule.
   type="string"
   required="false"
   description="Message is returned to the caller when the rule blocks a request or response."
+/><ApiField
+  name="presidio"
+  type="[PresidioGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-presidioguardrailprovider)"
+  required="false"
+  description="Presidio configures the Presidio analyzer provider."
+/><ApiField
+  name="bedrock"
+  type="[BedrockGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-bedrockguardrailprovider)"
+  required="false"
+  description="Bedrock configures AWS Bedrock Guardrails."
+/><ApiField
+  name="azureContentSafety"
+  type="[AzureContentSafetyGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-azurecontentsafetyguardrailprovider)"
+  required="false"
+  description="AzureContentSafety configures Azure AI Content Safety."
+/><ApiField
+  name="timeoutSeconds"
+  type="integer"
+  required="false"
+  defaultValue="10"
+  description="TimeoutSeconds limits each external provider evaluation."
+/><ApiField
+  name="failureMode"
+  type="[GuardrailFailureMode](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailfailuremode)"
+  required="false"
+  defaultValue="FailClosed"
+  description="FailureMode determines whether provider errors block or allow the request."
 />
 
 
@@ -2628,6 +2761,43 @@ a tool must match an include rule AND not match any exclude rule to be allowed.
   type="[QuotaDefinition](#github-com-envoyproxy-ai-gateway-api-v1alpha1-quotadefinition)"
   required="true"
   description="Expression for computing request cost and rules for matching requests to quota buckets."
+/>
+
+
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-presidioguardrailprovider">PresidioGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailprovider)
+
+PresidioGuardrailProvider configures calls to a Presidio analyzer service.
+
+##### Fields
+
+
+
+<ApiField
+  name="endpoint"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="language"
+  type="string"
+  required="false"
+  defaultValue="en"
+  description=""
+/><ApiField
+  name="scoreThresholdPercent"
+  type="integer"
+  required="false"
+  description=""
+/><ApiField
+  name="apiKeySecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="false"
+  description="APIKeySecretRef optionally references a Secret whose apiKey entry is sent as a Bearer token."
 />
 
 
@@ -3494,6 +3664,7 @@ MCPRouteList contains a list of MCPRoute.
 - [APISchema](#github-com-envoyproxy-ai-gateway-api-v1beta1-apischema)
 - [AWSCredentialsFile](#github-com-envoyproxy-ai-gateway-api-v1beta1-awscredentialsfile)
 - [AWSOIDCExchangeToken](#github-com-envoyproxy-ai-gateway-api-v1beta1-awsoidcexchangetoken)
+- [AzureContentSafetyGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-azurecontentsafetyguardrailprovider)
 - [AzureOIDCExchangeToken](#github-com-envoyproxy-ai-gateway-api-v1beta1-azureoidcexchangetoken)
 - [BackendSecurityPolicyAPIKey](#github-com-envoyproxy-ai-gateway-api-v1beta1-backendsecuritypolicyapikey)
 - [BackendSecurityPolicyAWSCredentials](#github-com-envoyproxy-ai-gateway-api-v1beta1-backendsecuritypolicyawscredentials)
@@ -3506,6 +3677,7 @@ MCPRouteList contains a list of MCPRoute.
 - [BackendSecurityPolicySpec](#github-com-envoyproxy-ai-gateway-api-v1beta1-backendsecuritypolicyspec)
 - [BackendSecurityPolicyStatus](#github-com-envoyproxy-ai-gateway-api-v1beta1-backendsecuritypolicystatus)
 - [BackendSecurityPolicyType](#github-com-envoyproxy-ai-gateway-api-v1beta1-backendsecuritypolicytype)
+- [BedrockGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-bedrockguardrailprovider)
 - [CredentialOverrideFromDynamicMetadata](#github-com-envoyproxy-ai-gateway-api-v1beta1-credentialoverridefromdynamicmetadata)
 - [CredentialOverrideFromRequestHeaders](#github-com-envoyproxy-ai-gateway-api-v1beta1-credentialoverridefromrequestheaders)
 - [GCPCredentialsFile](#github-com-envoyproxy-ai-gateway-api-v1beta1-gcpcredentialsfile)
@@ -3518,6 +3690,7 @@ MCPRouteList contains a list of MCPRoute.
 - [GatewayConfigSpec](#github-com-envoyproxy-ai-gateway-api-v1beta1-gatewayconfigspec)
 - [GatewayConfigStatus](#github-com-envoyproxy-ai-gateway-api-v1beta1-gatewayconfigstatus)
 - [GuardrailAction](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailaction)
+- [GuardrailFailureMode](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailfailuremode)
 - [GuardrailPhase](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailphase)
 - [GuardrailPolicySpec](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailpolicyspec)
 - [GuardrailPolicyStatus](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailpolicystatus)
@@ -3552,6 +3725,7 @@ MCPRouteList contains a list of MCPRoute.
 - [MCPRouteSpec](#github-com-envoyproxy-ai-gateway-api-v1beta1-mcproutespec)
 - [MCPRouteStatus](#github-com-envoyproxy-ai-gateway-api-v1beta1-mcproutestatus)
 - [MCPToolFilter](#github-com-envoyproxy-ai-gateway-api-v1beta1-mcptoolfilter)
+- [PresidioGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-presidioguardrailprovider)
 - [ProtectedResourceMetadata](#github-com-envoyproxy-ai-gateway-api-v1beta1-protectedresourcemetadata)
 - [ToolCall](#github-com-envoyproxy-ai-gateway-api-v1beta1-toolcall)
 - [VersionedAPISchema](#github-com-envoyproxy-ai-gateway-api-v1beta1-versionedapischema)
@@ -3935,6 +4109,43 @@ and store them in a temporary credentials file.
   type="string"
   required="true"
   description="AwsRoleArn is the AWS IAM Role with the permission to use specific resources in AWS account<br />which maps to the temporary AWS security credentials exchanged using the authentication token issued by OIDC provider."
+/>
+
+
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-azurecontentsafetyguardrailprovider">AzureContentSafetyGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailprovider)
+
+AzureContentSafetyGuardrailProvider configures calls to Azure AI Content Safety.
+
+##### Fields
+
+
+
+<ApiField
+  name="endpoint"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="apiVersion"
+  type="string"
+  required="false"
+  defaultValue="2024-09-01"
+  description=""
+/><ApiField
+  name="severityThreshold"
+  type="integer"
+  required="false"
+  description=""
+/><ApiField
+  name="apiKeySecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="true"
+  description="APIKeySecretRef references a Secret whose apiKey entry is sent to Azure."
 />
 
 
@@ -4347,6 +4558,47 @@ BackendSecurityPolicyType specifies the type of auth mechanism used to access a 
   required="false"
   description=""
 />
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-bedrockguardrailprovider">BedrockGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailprovider)
+
+BedrockGuardrailProvider configures calls to the AWS Bedrock ApplyGuardrail API.
+
+##### Fields
+
+
+
+<ApiField
+  name="region"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="guardrailIdentifier"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="guardrailVersion"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="endpoint"
+  type="string"
+  required="false"
+  description="Endpoint overrides the Bedrock runtime endpoint, primarily for private endpoints and testing."
+/><ApiField
+  name="credentialsSecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="false"
+  description="CredentialsSecretRef optionally references a Secret whose credentials entry contains an AWS shared credentials file."
+/>
+
+
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-credentialoverridefromdynamicmetadata">CredentialOverrideFromDynamicMetadata</a>
 
 
@@ -4640,6 +4892,30 @@ GuardrailAction defines the safeguard action.
   required="false"
   description=""
 />
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailfailuremode">GuardrailFailureMode</a>
+
+**Underlying type:** string
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailprovider)
+
+GuardrailFailureMode defines behavior when an external provider cannot evaluate content.
+
+
+
+##### Possible Values
+
+<ApiField
+  name="FailClosed"
+  type="enum"
+  required="false"
+  description=""
+/><ApiField
+  name="FailOpen"
+  type="enum"
+  required="false"
+  description=""
+/>
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailphase">GuardrailPhase</a>
 
 **Underlying type:** string
@@ -4680,12 +4956,12 @@ GuardrailPolicySpec contains the configured checks attached to an AIServiceBacke
 <ApiField
   name="targetRefs"
   type="[LocalPolicyTargetReference](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1alpha2.LocalPolicyTargetReference) array"
-  required="false"
+  required="true"
   description="TargetRefs are the names of the AIServiceBackend resources this GuardrailPolicy is attached to."
 /><ApiField
   name="rules"
   type="[GuardrailRule](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailrule) array"
-  required="false"
+  required="true"
   description="Rules are executed in order and can evaluate request or response payloads."
 />
 
@@ -4745,6 +5021,33 @@ GuardrailProvider describes the implementation used to evaluate a rule.
   type="string"
   required="false"
   description="Message is returned to the caller when the rule blocks a request or response."
+/><ApiField
+  name="presidio"
+  type="[PresidioGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-presidioguardrailprovider)"
+  required="false"
+  description="Presidio configures the Presidio analyzer provider."
+/><ApiField
+  name="bedrock"
+  type="[BedrockGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-bedrockguardrailprovider)"
+  required="false"
+  description="Bedrock configures AWS Bedrock Guardrails."
+/><ApiField
+  name="azureContentSafety"
+  type="[AzureContentSafetyGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-azurecontentsafetyguardrailprovider)"
+  required="false"
+  description="AzureContentSafety configures Azure AI Content Safety."
+/><ApiField
+  name="timeoutSeconds"
+  type="integer"
+  required="false"
+  defaultValue="10"
+  description="TimeoutSeconds limits each external provider evaluation."
+/><ApiField
+  name="failureMode"
+  type="[GuardrailFailureMode](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailfailuremode)"
+  required="false"
+  defaultValue="FailClosed"
+  description="FailureMode determines whether provider errors block or allow the request."
 />
 
 
@@ -5735,6 +6038,43 @@ a tool must match an include rule AND not match any exclude rule to be allowed.
   type="string array"
   required="false"
   description="ExcludeRegex is a list of RE2-compatible regular expressions that, when matched, exclude the tool.<br />Tools matching these patterns will not be available. Exclude rules take precedence over include rules."
+/>
+
+
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-presidioguardrailprovider">PresidioGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailprovider)
+
+PresidioGuardrailProvider configures calls to a Presidio analyzer service.
+
+##### Fields
+
+
+
+<ApiField
+  name="endpoint"
+  type="string"
+  required="true"
+  description=""
+/><ApiField
+  name="language"
+  type="string"
+  required="false"
+  defaultValue="en"
+  description=""
+/><ApiField
+  name="scoreThresholdPercent"
+  type="integer"
+  required="false"
+  description=""
+/><ApiField
+  name="apiKeySecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="false"
+  description="APIKeySecretRef optionally references a Secret whose apiKey entry is sent as a Bearer token."
 />
 
 

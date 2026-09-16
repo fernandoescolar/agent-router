@@ -26,6 +26,14 @@ type BackendAuthHandler interface {
 // NewBackendAuthHandlerFunc is a function type that creates a new BackendAuthHandler for a given BackendAuth configuration.
 type NewBackendAuthHandlerFunc func(ctx context.Context, auth *BackendAuth) (BackendAuthHandler, error)
 
+// GuardrailEvaluator evaluates a request or response payload using a configured provider.
+type GuardrailEvaluator interface {
+	Evaluate(ctx context.Context, body []byte, phase GuardrailPhase) (blocked bool, err error)
+}
+
+// NewGuardrailEvaluatorFunc creates an evaluator for an external guardrail provider.
+type NewGuardrailEvaluatorFunc func(ctx context.Context, provider *GuardrailProvider) (GuardrailEvaluator, error)
+
 // RuntimeConfig is the runtime filter configuration that is derived from the filterapi.Config.
 type RuntimeConfig struct {
 	// UUID is the unique identifier of the filter configuration, inherited from filterapi.Config.
@@ -74,14 +82,20 @@ type RuntimeRequestCost struct {
 
 // RuntimeGuardrail is a compiled guardrail rule for runtime evaluation.
 type RuntimeGuardrail struct {
-	Name     string
-	Phase    GuardrailPhase
-	Provider GuardrailProvider
-	Matcher  *regexp.Regexp
+	Name      string
+	Phase     GuardrailPhase
+	Provider  GuardrailProvider
+	Backends  []string
+	Matcher   *regexp.Regexp
+	Evaluator GuardrailEvaluator
 }
 
 // NewRuntimeConfig creates a new runtime filter configuration from the given filterapi.Config and a function to create backend auth handlers.
-func NewRuntimeConfig(ctx context.Context, config *Config, fn NewBackendAuthHandlerFunc) (*RuntimeConfig, error) {
+func NewRuntimeConfig(ctx context.Context, config *Config, fn NewBackendAuthHandlerFunc, guardrailEvaluatorFactories ...NewGuardrailEvaluatorFunc) (*RuntimeConfig, error) {
+	var newGuardrailEvaluator NewGuardrailEvaluatorFunc
+	if len(guardrailEvaluatorFactories) > 0 {
+		newGuardrailEvaluator = guardrailEvaluatorFactories[0]
+	}
 	backends := make(map[string]*RuntimeBackend, len(config.Backends))
 	for i := range config.Backends {
 		b := &config.Backends[i]
@@ -149,14 +163,24 @@ func NewRuntimeConfig(ctx context.Context, config *Config, fn NewBackendAuthHand
 				Name:     g.Name,
 				Phase:    g.Phase,
 				Provider: g.Provider,
+				Backends: g.Backends,
 				Matcher:  re,
 			})
 			continue
 		}
+		if newGuardrailEvaluator == nil {
+			return nil, fmt.Errorf("guardrail %q uses provider %q but no evaluator factory is configured", g.Name, g.Provider.Type)
+		}
+		evaluator, err := newGuardrailEvaluator(ctx, &g.Provider)
+		if err != nil {
+			return nil, fmt.Errorf("cannot create evaluator for guardrail %q: %w", g.Name, err)
+		}
 		guardrails = append(guardrails, RuntimeGuardrail{
-			Name:     g.Name,
-			Phase:    g.Phase,
-			Provider: g.Provider,
+			Name:      g.Name,
+			Phase:     g.Phase,
+			Provider:  g.Provider,
+			Backends:  g.Backends,
+			Evaluator: evaluator,
 		})
 	}
 

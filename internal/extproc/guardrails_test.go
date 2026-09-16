@@ -7,6 +7,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"regexp"
 	"testing"
@@ -24,6 +25,12 @@ type recordingGuardrailMetrics struct {
 	phase  string
 	result metrics.GuardrailResult
 	count  int
+}
+
+type failingGuardrailEvaluator struct{}
+
+func (*failingGuardrailEvaluator) Evaluate(context.Context, []byte, filterapi.GuardrailPhase) (bool, error) {
+	return false, errors.New("provider unavailable")
 }
 
 func (m *recordingGuardrailMetrics) RecordEvaluation(_ context.Context, phase string, result metrics.GuardrailResult) {
@@ -44,7 +51,7 @@ func TestEvaluateGuardrailsForPhase(t *testing.T) {
 			Matcher: regexp.MustCompile(`\bSSN\b`),
 		}}
 
-		violation, err := evaluateRequestGuardrails(guardrails, []byte("customer SSN is present"))
+		violation, err := evaluateRequestGuardrails(t.Context(), guardrails, []byte("customer SSN is present"))
 		require.NoError(t, err)
 		require.NotNil(t, violation)
 		require.Equal(t, "deny-pii", violation.Name)
@@ -61,7 +68,7 @@ func TestEvaluateGuardrailsForPhase(t *testing.T) {
 			Matcher: regexp.MustCompile(`forbidden`),
 		}}
 
-		violation, err := evaluateRequestGuardrails(guardrails, []byte("forbidden"))
+		violation, err := evaluateRequestGuardrails(t.Context(), guardrails, []byte("forbidden"))
 		require.NoError(t, err)
 		require.Nil(t, violation)
 	})
@@ -75,7 +82,7 @@ func TestEvaluateGuardrailsForPhase(t *testing.T) {
 			},
 		}}
 
-		violation, err := evaluateRequestGuardrails(guardrails, []byte("forbidden"))
+		violation, err := evaluateRequestGuardrails(t.Context(), guardrails, []byte("forbidden"))
 		require.Error(t, err)
 		require.Nil(t, violation)
 		require.Contains(t, err.Error(), "uses regex provider without a compiled matcher")
@@ -120,6 +127,41 @@ func TestRecordGuardrailEvaluationIgnoresUnconfiguredPhase(t *testing.T) {
 		guardrailMetrics: recorder,
 	}
 
-	processor.recordGuardrailEvaluation(t.Context(), filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
+	processor.recordGuardrailEvaluation(t.Context(), filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
 	require.Zero(t, recorder.count)
+}
+
+func TestBackendScopedGuardrail(t *testing.T) {
+	guardrails := []filterapi.RuntimeGuardrail{{
+		Name: "backend-only", Phase: filterapi.GuardrailPhaseRequest,
+		Backends: []string{"selected-backend"},
+		Provider: filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeRegex},
+		Matcher:  regexp.MustCompile("blocked"),
+	}}
+
+	violation, err := evaluateBackendRequestGuardrails(t.Context(), guardrails, []byte("blocked"), "other-backend")
+	require.NoError(t, err)
+	require.Nil(t, violation)
+
+	violation, err = evaluateBackendRequestGuardrails(t.Context(), guardrails, []byte("blocked"), "selected-backend")
+	require.NoError(t, err)
+	require.NotNil(t, violation)
+}
+
+func TestGuardrailFailureModes(t *testing.T) {
+	guardrail := filterapi.RuntimeGuardrail{
+		Name: "external", Phase: filterapi.GuardrailPhaseRequest,
+		Provider:  filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypePresidio},
+		Evaluator: &failingGuardrailEvaluator{},
+	}
+
+	_, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{guardrail}, []byte("payload"))
+	require.Error(t, err)
+	require.False(t, isGuardrailFailOpenError(err))
+
+	guardrail.Provider.FailureMode = filterapi.GuardrailFailureModeFailOpen
+	violation, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{guardrail}, []byte("payload"))
+	require.Nil(t, violation)
+	require.Error(t, err)
+	require.True(t, isGuardrailFailOpenError(err))
 }
