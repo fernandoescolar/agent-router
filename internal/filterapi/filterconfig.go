@@ -52,7 +52,49 @@ type Config struct {
 	UnscopedModels []Model `json:"unscopedModels,omitempty"`
 	// MCPConfig is the configuration for the MCPRoute implementations.
 	MCPConfig *MCPConfig `json:"mcpConfig,omitempty"`
+	// Guardrails are content-safety checks evaluated before the request is forwarded upstream or before the response is returned to the client.
+	Guardrails []Guardrail `json:"guardrails,omitempty"`
 }
+
+// Guardrail specifies a content-safety rule to evaluate.
+type Guardrail struct {
+	Name     string            `json:"name"`
+	Phase    GuardrailPhase    `json:"phase"`
+	Provider GuardrailProvider `json:"provider"`
+}
+
+// GuardrailPhase determines when the rule is evaluated.
+type GuardrailPhase string
+
+const (
+	GuardrailPhaseRequest  GuardrailPhase = "Request"
+	GuardrailPhaseResponse GuardrailPhase = "Response"
+)
+
+// GuardrailProvider describes the implementation used to evaluate a guardrail.
+type GuardrailProvider struct {
+	Type    GuardrailProviderType `json:"type"`
+	Pattern string                `json:"pattern,omitempty"`
+	Action  GuardrailAction       `json:"action,omitempty"`
+	Message string                `json:"message,omitempty"`
+}
+
+// GuardrailProviderType identifies a guardrail implementation.
+type GuardrailProviderType string
+
+const (
+	GuardrailProviderTypeRegex              GuardrailProviderType = "Regex"
+	GuardrailProviderTypePresidio           GuardrailProviderType = "Presidio"
+	GuardrailProviderTypeBedrockGuardrails  GuardrailProviderType = "Bedrock"
+	GuardrailProviderTypeAzureContentSafety GuardrailProviderType = "AzureContentSafety"
+)
+
+// GuardrailAction is the action taken when the rule matches.
+type GuardrailAction string
+
+const (
+	GuardrailActionBlock GuardrailAction = "Block"
+)
 
 // Model corresponds to the OpenAI model object in the OpenAI-compatible APIs
 // and is used to populate the "/models" endpoint in OpenAI-compatible APIs.

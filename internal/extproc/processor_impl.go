@@ -252,6 +252,11 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		}
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
+	if violation, err := evaluateRequestGuardrails(r.config.Guardrails, rawBody.Body); err != nil {
+		return nil, fmt.Errorf("failed to evaluate request guardrails: %w", err)
+	} else if violation != nil {
+		return createUserFacingErrorResponse(400, "BadRequest", violation.Message), nil
+	}
 
 	// Use the request-scoped logger from context if available, otherwise fall back to processor logger
 	logger := loggerFromContext(ctx)
@@ -617,6 +622,12 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 
 	// Translator reports the latest cumulative token usage which we use to override existing costs.
 	u.costs.Override(tokenUsage)
+
+	if violation, err := evaluateResponseGuardrails(u.parent.config.Guardrails, body.Body); err != nil {
+		return nil, fmt.Errorf("failed to evaluate response guardrails: %w", err)
+	} else if violation != nil {
+		return u.respondLocally(ctx, 400, "BadRequest", violation.Message), nil
+	}
 
 	// Set the response model for metrics
 	u.metrics.SetResponseModel(responseModel)
