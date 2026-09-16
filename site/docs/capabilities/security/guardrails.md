@@ -16,6 +16,8 @@ kind: GuardrailPolicy
 metadata:
   name: pii-guardrails
 spec:
+  maxRequestBodyBytes: 10485760
+  maxResponseBodyBytes: 10485760
   targetRefs:
     - group: aigateway.envoyproxy.io
       kind: AIServiceBackend
@@ -31,6 +33,14 @@ spec:
 ```
 
 A matched rule returns HTTP `403` with error type `GuardrailViolation`. Rules are scoped to the generated backends that reference the targeted `AIServiceBackend`.
+
+Rules support three actions:
+
+- `Block` rejects matching traffic.
+- `Monitor` records matching traffic without blocking or changing it.
+- `Mask` replaces detected text. Regex and Presidio use `maskReplacement`; Bedrock uses transformed output returned by the provider. Azure Text Analysis does not support Mask.
+
+When multiple policies target one backend, policies are evaluated in namespace/name order and rules retain declaration order. The first Block result stops evaluation.
 
 ## External providers
 
@@ -100,7 +110,9 @@ Credential Secret changes automatically requeue the policy and regenerate affect
 
 ## Streaming responses
 
-When an applicable response guardrail exists, the gateway keeps the upstream response buffered until evaluation completes. This prevents unsafe content from being partially delivered before a blocking decision. Routes without response guardrails retain normal streaming behavior.
+When an applicable response guardrail exists, the gateway keeps the upstream response buffered until evaluation completes. This prevents unsafe content from being partially delivered before a blocking or masking decision and gives Monitor rules a complete payload. Routes without response guardrails retain normal streaming behavior.
+
+Request and response limits default to 10 MiB and can be configured independently with `maxRequestBodyBytes` and `maxResponseBodyBytes`, up to 50 MiB. An oversized payload follows the rule's failure mode.
 
 ## Observability
 

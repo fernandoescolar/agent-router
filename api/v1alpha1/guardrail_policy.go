@@ -42,6 +42,18 @@ type GuardrailPolicySpec struct {
 	// +kubebuilder:validation:MaxItems=32
 	// +kubebuilder:validation:XValidation:rule="self.all(rule, self.exists_one(other, other.name == rule.name))",message="rule name must be unique within the policy"
 	Rules []GuardrailRule `json:"rules,omitempty"`
+	// MaxRequestBodyBytes is the largest request body evaluated by this policy.
+	// +optional
+	// +kubebuilder:default=10485760
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=52428800
+	MaxRequestBodyBytes *int64 `json:"maxRequestBodyBytes,omitempty"`
+	// MaxResponseBodyBytes is the largest response body buffered and evaluated by this policy.
+	// +optional
+	// +kubebuilder:default=10485760
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=52428800
+	MaxResponseBodyBytes *int64 `json:"maxResponseBodyBytes,omitempty"`
 }
 
 // GuardrailRule defines one content-safety check to apply to a request or response.
@@ -73,6 +85,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))",message="Presidio requires only presidio provider configuration"
 // +kubebuilder:validation:XValidation:rule="self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock) && !has(self.presidio) && !has(self.azureContentSafety))",message="Bedrock requires only bedrock provider configuration"
 // +kubebuilder:validation:XValidation:rule="self.type != 'AzureContentSafety' || (!has(self.pattern) && has(self.azureContentSafety) && !has(self.presidio) && !has(self.bedrock))",message="AzureContentSafety requires only azureContentSafety provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.action != 'Mask' || self.type != 'AzureContentSafety'",message="AzureContentSafety does not support Mask"
 type GuardrailProvider struct {
 	// Type identifies the guardrail implementation.
 	//
@@ -86,8 +99,12 @@ type GuardrailProvider struct {
 	//
 	// +optional
 	// +kubebuilder:default=Block
-	// +kubebuilder:validation:Enum=Block
+	// +kubebuilder:validation:Enum=Block;Monitor;Mask
 	Action GuardrailAction `json:"action,omitempty"`
+	// MaskReplacement is used by Regex and Presidio Mask actions.
+	// +optional
+	// +kubebuilder:default="[REDACTED]"
+	MaskReplacement string `json:"maskReplacement,omitempty"`
 	// Message is returned to the caller when the rule blocks a request or response.
 	//
 	// +optional
@@ -179,7 +196,9 @@ const (
 type GuardrailAction string
 
 const (
-	GuardrailActionBlock GuardrailAction = "Block"
+	GuardrailActionBlock   GuardrailAction = "Block"
+	GuardrailActionMonitor GuardrailAction = "Monitor"
+	GuardrailActionMask    GuardrailAction = "Mask"
 )
 
 // GuardrailFailureMode defines behavior when an external provider cannot evaluate content.

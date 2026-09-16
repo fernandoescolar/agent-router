@@ -112,8 +112,11 @@ func (c *GuardrailPolicyController) syncGuardrailPolicy(ctx context.Context, pol
 }
 
 func (c *GuardrailPolicyController) validateGuardrailProvider(ctx context.Context, namespace string, provider *aigv1b1.GuardrailProvider) error {
-	if provider.Action != "" && provider.Action != aigv1b1.GuardrailActionBlock {
+	if provider.Action != "" && provider.Action != aigv1b1.GuardrailActionBlock && provider.Action != aigv1b1.GuardrailActionMonitor && provider.Action != aigv1b1.GuardrailActionMask {
 		return fmt.Errorf("unsupported action %q", provider.Action)
+	}
+	if provider.Action == aigv1b1.GuardrailActionMask && provider.Type == aigv1b1.GuardrailProviderTypeAzureContentSafety {
+		return fmt.Errorf("azure Content Safety does not support mask")
 	}
 	if provider.FailureMode != "" && provider.FailureMode != aigv1b1.GuardrailFailureModeFailClosed && provider.FailureMode != aigv1b1.GuardrailFailureModeFailOpen {
 		return fmt.Errorf("unsupported failureMode %q", provider.FailureMode)

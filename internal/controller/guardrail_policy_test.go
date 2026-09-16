@@ -216,6 +216,36 @@ func TestInjectGuardrailsTargetsRouteBackends(t *testing.T) {
 	require.Equal(t, []string{"default/backend/route/route/rule/0/ref/0"}, config.Guardrails[0].Backends)
 }
 
+func TestInjectGuardrailsUsesDeterministicPolicyOrder(t *testing.T) {
+	const namespace = "default"
+	controllerClient := newGuardrailPolicyTestClient(t)
+	for _, name := range []string{"zeta", "alpha"} {
+		require.NoError(t, controllerClient.Create(t.Context(), &aigv1b1.GuardrailPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec: aigv1b1.GuardrailPolicySpec{
+				TargetRefs: []gwapiv1a2.LocalPolicyTargetReference{{Name: "backend"}},
+				Rules: []aigv1b1.GuardrailRule{{
+					Name: "rule", Phase: aigv1b1.GuardrailPhaseRequest,
+					Provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: name},
+				}},
+			},
+		}))
+	}
+	controller := &GatewayController{client: controllerClient, kube: fakekube.NewClientset(), logger: ctrl.Log}
+	config := &filterapi.Config{}
+	route := &aigv1b1.AIGatewayRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: namespace},
+		Spec: aigv1b1.AIGatewayRouteSpec{Rules: []aigv1b1.AIGatewayRouteRule{{
+			BackendRefs: []aigv1b1.AIGatewayRouteRuleBackendRef{{Name: "backend"}},
+		}}},
+	}
+	require.NoError(t, controller.injectGuardrails(t.Context(), route, config, map[string]struct{}{}))
+	require.Len(t, config.Guardrails, 2)
+	require.Equal(t, "default/alpha/rule", config.Guardrails[0].Name)
+	require.Equal(t, "default/zeta/rule", config.Guardrails[1].Name)
+	require.Equal(t, defaultGuardrailMaxPayloadBytes, config.Guardrails[0].MaxPayloadBytes)
+}
+
 func TestSecretToGuardrailPolicy(t *testing.T) {
 	const namespace = "default"
 	controllerClient := newGuardrailPolicyTestClient(t)
@@ -248,10 +278,12 @@ func TestInjectGuardrailsConfigurationFailureModes(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		failureMode   aigv1b1.GuardrailFailureMode
+		action        aigv1b1.GuardrailAction
 		wantGuardrail bool
 	}{
 		{name: "fail closed publishes blocking fallback", wantGuardrail: true},
 		{name: "fail open omits unavailable rule", failureMode: aigv1b1.GuardrailFailureModeFailOpen},
+		{name: "monitor omits unavailable rule", action: aigv1b1.GuardrailActionMonitor},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			controllerClient := newGuardrailPolicyTestClient(t)
@@ -263,6 +295,7 @@ func TestInjectGuardrailsConfigurationFailureModes(t *testing.T) {
 						Name: "azure", Phase: aigv1b1.GuardrailPhaseRequest,
 						Provider: aigv1b1.GuardrailProvider{
 							Type:        aigv1b1.GuardrailProviderTypeAzureContentSafety,
+							Action:      test.action,
 							FailureMode: test.failureMode,
 							AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{
 								Endpoint:        "https://content-safety.example.com",
@@ -319,7 +352,7 @@ func TestGuardrailPolicyToRuntimeIntegration(t *testing.T) {
 	}, guardrails.NewEvaluator)
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Guardrails, 1)
-	blocked, err := runtimeConfig.Guardrails[0].Evaluator.Evaluate(t.Context(), []byte("user@example.com"), filterapi.GuardrailPhaseRequest)
+	evaluation, err := runtimeConfig.Guardrails[0].Evaluator.Evaluate(t.Context(), []byte("user@example.com"), filterapi.GuardrailPhaseRequest)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
 }

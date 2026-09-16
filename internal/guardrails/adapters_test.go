@@ -31,17 +31,18 @@ func TestPresidioEvaluatorHTTP(t *testing.T) {
 		require.Equal(t, "customer SSN", body.Text)
 		require.Equal(t, "es", body.Language)
 		require.Equal(t, 0.75, body.ScoreThreshold)
-		_, _ = w.Write([]byte(`[{"entity_type":"US_SSN","score":0.98}]`))
+		_, _ = w.Write([]byte(`[{"entity_type":"US_SSN","start":9,"end":12,"score":0.98}]`))
 	}))
 	t.Cleanup(server.Close)
 
 	evaluator, err := newPresidioEvaluator(&filterapi.PresidioGuardrailProvider{
 		Endpoint: server.URL, Language: "es", ScoreThresholdPercent: 75, APIKey: "secret",
-	}, server.Client())
+	}, "[REDACTED]", server.Client())
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte("customer SSN"), filterapi.GuardrailPhaseRequest)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte("customer SSN"), filterapi.GuardrailPhaseRequest)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
+	require.Equal(t, "customer [REDACTED]", string(evaluation.Replacement))
 }
 
 func TestAzureContentSafetyEvaluatorHTTP(t *testing.T) {
@@ -58,9 +59,9 @@ func TestAzureContentSafetyEvaluatorHTTP(t *testing.T) {
 		Endpoint: server.URL, APIKey: "azure-secret", SeverityThreshold: &severityThreshold,
 	}, server.Client())
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte("unsafe response"), filterapi.GuardrailPhaseResponse)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte("unsafe response"), filterapi.GuardrailPhaseResponse)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
 }
 
 func TestBedrockEvaluatorHTTP(t *testing.T) {
@@ -79,7 +80,7 @@ func TestBedrockEvaluatorHTTP(t *testing.T) {
 		require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 		require.Equal(t, "OUTPUT", body.Source)
 		require.Equal(t, "unsafe response", body.Content[0].Text.Text)
-		_, _ = w.Write([]byte(`{"action":"GUARDRAIL_INTERVENED"}`))
+		_, _ = w.Write([]byte(`{"action":"GUARDRAIL_INTERVENED","outputs":[{"text":"safe response"}]}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -92,9 +93,10 @@ aws_secret_access_key = secret
 `),
 	}, server.Client())
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte("unsafe response"), filterapi.GuardrailPhaseResponse)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte("unsafe response"), filterapi.GuardrailPhaseResponse)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
+	require.Equal(t, "safe response", string(evaluation.Replacement))
 }
 
 func TestEvaluatorProviderError(t *testing.T) {
@@ -103,10 +105,10 @@ func TestEvaluatorProviderError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	evaluator, err := newPresidioEvaluator(&filterapi.PresidioGuardrailProvider{Endpoint: server.URL}, server.Client())
+	evaluator, err := newPresidioEvaluator(&filterapi.PresidioGuardrailProvider{Endpoint: server.URL}, "", server.Client())
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte("payload"), filterapi.GuardrailPhaseRequest)
-	require.False(t, blocked)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte("payload"), filterapi.GuardrailPhaseRequest)
+	require.False(t, evaluation.Matched)
 	require.ErrorContains(t, err, "HTTP 503")
 	require.ErrorContains(t, err, "provider unavailable")
 }

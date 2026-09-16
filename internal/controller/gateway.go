@@ -608,6 +608,12 @@ func (c *GatewayController) injectGuardrails(
 	if err := c.client.List(ctx, &policies, client.InNamespace(route.Namespace)); err != nil {
 		return fmt.Errorf("failed to list GuardrailPolicies: %w", err)
 	}
+	sort.Slice(policies.Items, func(i, j int) bool {
+		if policies.Items[i].Namespace != policies.Items[j].Namespace {
+			return policies.Items[i].Namespace < policies.Items[j].Namespace
+		}
+		return policies.Items[i].Name < policies.Items[j].Name
+	})
 
 	routeBackends := make(map[string]struct{})
 	for _, routeRule := range route.Spec.Rules {
@@ -639,7 +645,7 @@ func (c *GatewayController) injectGuardrails(
 			backends := guardrailBackendNames(route, policy)
 			provider, err := c.guardrailProviderToFilterAPI(ctx, policy.Namespace, &rule.Provider)
 			if err != nil {
-				if rule.Provider.FailureMode == aigv1b1.GuardrailFailureModeFailOpen {
+				if rule.Provider.FailureMode == aigv1b1.GuardrailFailureModeFailOpen || rule.Provider.Action == aigv1b1.GuardrailActionMonitor {
 					c.logger.Error(err, "guardrail configuration failed open", "policy", policy.Name, "rule", rule.Name)
 					injected[key] = struct{}{}
 					continue
@@ -653,15 +659,29 @@ func (c *GatewayController) injectGuardrails(
 				}
 			}
 			ec.Guardrails = append(ec.Guardrails, filterapi.Guardrail{
-				Name:     key,
-				Phase:    filterapi.GuardrailPhase(rule.Phase),
-				Provider: provider,
-				Backends: backends,
+				Name:            key,
+				Phase:           filterapi.GuardrailPhase(rule.Phase),
+				Provider:        provider,
+				Backends:        backends,
+				MaxPayloadBytes: guardrailMaxPayloadBytes(policy, rule.Phase),
 			})
 			injected[key] = struct{}{}
 		}
 	}
 	return nil
+}
+
+const defaultGuardrailMaxPayloadBytes int64 = 10 * 1024 * 1024
+
+func guardrailMaxPayloadBytes(policy *aigv1b1.GuardrailPolicy, phase aigv1b1.GuardrailPhase) int64 {
+	configured := policy.Spec.MaxRequestBodyBytes
+	if phase == aigv1b1.GuardrailPhaseResponse {
+		configured = policy.Spec.MaxResponseBodyBytes
+	}
+	if configured == nil {
+		return defaultGuardrailMaxPayloadBytes
+	}
+	return *configured
 }
 
 func guardrailBackendNames(route *aigv1b1.AIGatewayRoute, policy *aigv1b1.GuardrailPolicy) []string {
@@ -688,11 +708,12 @@ func guardrailBackendNames(route *aigv1b1.AIGatewayRoute, policy *aigv1b1.Guardr
 
 func (c *GatewayController) guardrailProviderToFilterAPI(ctx context.Context, namespace string, provider *aigv1b1.GuardrailProvider) (filterapi.GuardrailProvider, error) {
 	converted := filterapi.GuardrailProvider{
-		Type:        filterapi.GuardrailProviderType(provider.Type),
-		Pattern:     provider.Pattern,
-		Action:      filterapi.GuardrailAction(provider.Action),
-		Message:     provider.Message,
-		FailureMode: filterapi.GuardrailFailureMode(provider.FailureMode),
+		Type:            filterapi.GuardrailProviderType(provider.Type),
+		Pattern:         provider.Pattern,
+		Action:          filterapi.GuardrailAction(provider.Action),
+		MaskReplacement: provider.MaskReplacement,
+		Message:         provider.Message,
+		FailureMode:     filterapi.GuardrailFailureMode(provider.FailureMode),
 	}
 	if provider.TimeoutSeconds != nil {
 		converted.TimeoutSeconds = *provider.TimeoutSeconds

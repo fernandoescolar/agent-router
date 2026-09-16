@@ -22,9 +22,11 @@ const (
 type GuardrailResult string
 
 const (
-	GuardrailResultAllowed GuardrailResult = "allowed"
-	GuardrailResultBlocked GuardrailResult = "blocked"
-	GuardrailResultError   GuardrailResult = "error"
+	GuardrailResultAllowed   GuardrailResult = "allowed"
+	GuardrailResultBlocked   GuardrailResult = "blocked"
+	GuardrailResultError     GuardrailResult = "error"
+	GuardrailResultMasked    GuardrailResult = "masked"
+	GuardrailResultMonitored GuardrailResult = "monitored"
 )
 
 // GuardrailMetrics records guardrail evaluation outcomes.

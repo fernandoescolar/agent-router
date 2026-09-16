@@ -50,10 +50,10 @@ func TestPresidioEvaluatorContainer(t *testing.T) {
 		Endpoint:              fmt.Sprintf("http://%s", net.JoinHostPort(host, port.Port())),
 		Language:              "en",
 		ScoreThresholdPercent: 80,
-	}, &http.Client{Timeout: 10 * time.Second})
+	}, "[REDACTED]", &http.Client{Timeout: 10 * time.Second})
 	require.NoError(t, err)
 
-	blocked, err := evaluator.Evaluate(ctx, []byte("Contact me at alice@example.com"), filterapi.GuardrailPhaseRequest)
+	evaluation, err := evaluator.Evaluate(ctx, []byte("Contact me at alice@example.com"), filterapi.GuardrailPhaseRequest)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
 }

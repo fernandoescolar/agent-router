@@ -29,9 +29,9 @@ func TestLivePresidio(t *testing.T) {
 	}
 	evaluator, err := NewEvaluator(t.Context(), provider)
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
 }
 
 func TestLiveAzureContentSafety(t *testing.T) {
@@ -49,9 +49,9 @@ func TestLiveAzureContentSafety(t *testing.T) {
 	}
 	evaluator, err := NewEvaluator(t.Context(), provider)
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
 }
 
 func TestLiveBedrockGuardrail(t *testing.T) {
@@ -70,7 +70,7 @@ func TestLiveBedrockGuardrail(t *testing.T) {
 	}
 	evaluator, err := NewEvaluator(t.Context(), provider)
 	require.NoError(t, err)
-	blocked, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
 	require.NoError(t, err)
-	require.True(t, blocked)
+	require.True(t, evaluation.Matched)
 }

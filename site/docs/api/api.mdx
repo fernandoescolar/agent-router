@@ -1768,6 +1768,16 @@ GuardrailAction defines the safeguard action.
   type="enum"
   required="false"
   description=""
+/><ApiField
+  name="Monitor"
+  type="enum"
+  required="false"
+  description=""
+/><ApiField
+  name="Mask"
+  type="enum"
+  required="false"
+  description=""
 />
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailfailuremode">GuardrailFailureMode</a>
 
@@ -1840,6 +1850,18 @@ GuardrailPolicySpec contains the configured checks attached to an AIServiceBacke
   type="[GuardrailRule](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailrule) array"
   required="true"
   description="Rules are executed in order and can evaluate request or response payloads."
+/><ApiField
+  name="maxRequestBodyBytes"
+  type="integer"
+  required="false"
+  defaultValue="10485760"
+  description="MaxRequestBodyBytes is the largest request body evaluated by this policy."
+/><ApiField
+  name="maxResponseBodyBytes"
+  type="integer"
+  required="false"
+  defaultValue="10485760"
+  description="MaxResponseBodyBytes is the largest response body buffered and evaluated by this policy."
 />
 
 
@@ -1893,6 +1915,12 @@ GuardrailProvider describes the implementation used to evaluate a rule.
   required="false"
   defaultValue="Block"
   description="Action is the action taken when the rule is matched."
+/><ApiField
+  name="maskReplacement"
+  type="string"
+  required="false"
+  defaultValue="[REDACTED]"
+  description="MaskReplacement is used by Regex and Presidio Mask actions."
 /><ApiField
   name="message"
   type="string"
@@ -4891,6 +4919,16 @@ GuardrailAction defines the safeguard action.
   type="enum"
   required="false"
   description=""
+/><ApiField
+  name="Monitor"
+  type="enum"
+  required="false"
+  description=""
+/><ApiField
+  name="Mask"
+  type="enum"
+  required="false"
+  description=""
 />
 #### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailfailuremode">GuardrailFailureMode</a>
 
@@ -4963,6 +5001,18 @@ GuardrailPolicySpec contains the configured checks attached to an AIServiceBacke
   type="[GuardrailRule](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailrule) array"
   required="true"
   description="Rules are executed in order and can evaluate request or response payloads."
+/><ApiField
+  name="maxRequestBodyBytes"
+  type="integer"
+  required="false"
+  defaultValue="10485760"
+  description="MaxRequestBodyBytes is the largest request body evaluated by this policy."
+/><ApiField
+  name="maxResponseBodyBytes"
+  type="integer"
+  required="false"
+  defaultValue="10485760"
+  description="MaxResponseBodyBytes is the largest response body buffered and evaluated by this policy."
 />
 
 
@@ -5016,6 +5066,12 @@ GuardrailProvider describes the implementation used to evaluate a rule.
   required="false"
   defaultValue="Block"
   description="Action is the action taken when the rule is matched."
+/><ApiField
+  name="maskReplacement"
+  type="string"
+  required="false"
+  defaultValue="[REDACTED]"
+  description="MaskReplacement is used by Regex and Presidio Mask actions."
 /><ApiField
   name="message"
   type="string"
