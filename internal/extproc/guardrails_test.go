@@ -6,13 +6,31 @@
 package extproc
 
 import (
+	"context"
+	"log/slog"
 	"regexp"
 	"testing"
 
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/require"
 
+	"github.com/envoyproxy/ai-gateway/internal/endpointspec"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
+	"github.com/envoyproxy/ai-gateway/internal/metrics"
+	"github.com/envoyproxy/ai-gateway/internal/tracing/tracingapi"
 )
+
+type recordingGuardrailMetrics struct {
+	phase  string
+	result metrics.GuardrailResult
+	count  int
+}
+
+func (m *recordingGuardrailMetrics) RecordEvaluation(_ context.Context, phase string, result metrics.GuardrailResult) {
+	m.phase = phase
+	m.result = result
+	m.count++
+}
 
 func TestEvaluateGuardrailsForPhase(t *testing.T) {
 	t.Run("request guardrail matches and returns violation", func(t *testing.T) {
@@ -62,4 +80,46 @@ func TestEvaluateGuardrailsForPhase(t *testing.T) {
 		require.Nil(t, violation)
 		require.Contains(t, err.Error(), "uses regex provider without a compiled matcher")
 	})
+}
+
+func TestRequestGuardrailBlockRecordsMetric(t *testing.T) {
+	recorder := &recordingGuardrailMetrics{}
+	config := &filterapi.RuntimeConfig{
+		Guardrails: []filterapi.RuntimeGuardrail{{
+			Name:  "deny-pii",
+			Phase: filterapi.GuardrailPhaseRequest,
+			Provider: filterapi.GuardrailProvider{
+				Type: filterapi.GuardrailProviderTypeRegex,
+			},
+			Matcher: regexp.MustCompile(`SSN`),
+		}},
+	}
+	factory := NewFactory(nil, recorder, tracingapi.NoopChatCompletionTracer{}, endpointspec.ChatCompletionsEndpointSpec{})
+	processor, err := factory(config, map[string]string{
+		"content-type": "application/json",
+		":path":        "/v1/chat/completions",
+	}, slog.Default(), false, false)
+	require.NoError(t, err)
+
+	response, err := processor.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{
+		Body: []byte(`{"model":"test","messages":[{"role":"user","content":"customer SSN"}]}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response.GetImmediateResponse())
+	require.Equal(t, 1, recorder.count)
+	require.Equal(t, string(filterapi.GuardrailPhaseRequest), recorder.phase)
+	require.Equal(t, metrics.GuardrailResultBlocked, recorder.result)
+}
+
+func TestRecordGuardrailEvaluationIgnoresUnconfiguredPhase(t *testing.T) {
+	recorder := &recordingGuardrailMetrics{}
+	processor := &chatCompletionProcessorRouterFilter{
+		config: &filterapi.RuntimeConfig{Guardrails: []filterapi.RuntimeGuardrail{{
+			Phase: filterapi.GuardrailPhaseResponse,
+		}}},
+		guardrailMetrics: recorder,
+	}
+
+	processor.recordGuardrailEvaluation(t.Context(), filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
+	require.Zero(t, recorder.count)
 }

@@ -17,6 +17,15 @@ type guardrailViolation struct {
 	Message string
 }
 
+func guardrailsConfiguredForPhase(guardrails []filterapi.RuntimeGuardrail, phase filterapi.GuardrailPhase) bool {
+	for i := range guardrails {
+		if guardrails[i].Phase == phase {
+			return true
+		}
+	}
+	return false
+}
+
 func evaluateGuardrailsForPhase(guardrails []filterapi.RuntimeGuardrail, phase filterapi.GuardrailPhase, body []byte) (*guardrailViolation, error) {
 	for i := range guardrails {
 		g := &guardrails[i]
