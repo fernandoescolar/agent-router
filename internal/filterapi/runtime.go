@@ -8,6 +8,7 @@ package filterapi
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/google/cel-go/cel"
 
@@ -45,6 +46,8 @@ type RuntimeConfig struct {
 	UnscopedModels []Model
 	// Backends is the map of backends by name.
 	Backends map[string]*RuntimeBackend
+	// Guardrails is the list of compiled runtime guardrails.
+	Guardrails []RuntimeGuardrail
 }
 
 // RuntimeBackend is a filter backend with its auth handler that is derived from the filterapi.Backend configuration.
@@ -67,6 +70,14 @@ type RuntimeGlobalRequestCost struct {
 type RuntimeRequestCost struct {
 	*LLMRequestCost
 	CELProg cel.Program
+}
+
+// RuntimeGuardrail is a compiled guardrail rule for runtime evaluation.
+type RuntimeGuardrail struct {
+	Name     string
+	Phase    GuardrailPhase
+	Provider GuardrailProvider
+	Matcher  *regexp.Regexp
 }
 
 // NewRuntimeConfig creates a new runtime filter configuration from the given filterapi.Config and a function to create backend auth handlers.
@@ -123,6 +134,32 @@ func NewRuntimeConfig(ctx context.Context, config *Config, fn NewBackendAuthHand
 		costs = append(costs, RuntimeRequestCost{LLMRequestCost: c, CELProg: prog})
 	}
 
+	guardrails := make([]RuntimeGuardrail, 0, len(config.Guardrails))
+	for i := range config.Guardrails {
+		g := &config.Guardrails[i]
+		if g.Provider.Type == GuardrailProviderTypeRegex {
+			if g.Provider.Pattern == "" {
+				return nil, fmt.Errorf("guardrail %q uses regex provider without a pattern", g.Name)
+			}
+			re, err := regexp.Compile(g.Provider.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("guardrail %q has an invalid regex pattern: %w", g.Name, err)
+			}
+			guardrails = append(guardrails, RuntimeGuardrail{
+				Name:     g.Name,
+				Phase:    g.Phase,
+				Provider: g.Provider,
+				Matcher:  re,
+			})
+			continue
+		}
+		guardrails = append(guardrails, RuntimeGuardrail{
+			Name:     g.Name,
+			Phase:    g.Phase,
+			Provider: g.Provider,
+		})
+	}
+
 	return &RuntimeConfig{
 		UUID:               config.UUID,
 		Backends:           backends,
@@ -131,5 +168,6 @@ func NewRuntimeConfig(ctx context.Context, config *Config, fn NewBackendAuthHand
 		DeclaredModels:     config.Models,
 		ModelsByHost:       config.ModelsByHost,
 		UnscopedModels:     config.UnscopedModels,
+		Guardrails:         guardrails,
 	}, nil
 }

@@ -118,6 +118,26 @@ func TestServer_LoadConfig(t *testing.T) {
 		require.Contains(t, err.Error(), "cannot create CEL program for cost")
 	})
 
+	t.Run("guardrail regex config compiles", func(t *testing.T) {
+		config := &Config{
+			Guardrails: []Guardrail{{
+				Name:  "deny-pii",
+				Phase: GuardrailPhaseRequest,
+				Provider: GuardrailProvider{
+					Type:    GuardrailProviderTypeRegex,
+					Pattern: `\bSSN\b`,
+				},
+			}},
+		}
+		rc, err := NewRuntimeConfig(t.Context(), config, func(_ context.Context, _ *BackendAuth) (BackendAuthHandler, error) {
+			return nil, nil
+		})
+		require.NoError(t, err)
+		require.Len(t, rc.Guardrails, 1)
+		require.NotNil(t, rc.Guardrails[0].Matcher)
+		require.True(t, rc.Guardrails[0].Matcher.MatchString("SSN"))
+	})
+
 	t.Run("error - route cost with empty RouteName", func(t *testing.T) {
 		config := &Config{
 			LLMRequestCosts: []LLMRequestCost{
