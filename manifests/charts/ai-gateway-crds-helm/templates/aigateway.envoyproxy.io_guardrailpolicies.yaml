@@ -334,8 +334,8 @@ spec:
                 - message: rule name must be unique within the policy
                   rule: self.all(rule, self.exists_one(other, other.name == rule.name))
               targetRefs:
-                description: TargetRefs are the names of the AIServiceBackend resources
-                  this GuardrailPolicy is attached to.
+                description: TargetRefs identify the AIServiceBackend resources this
+                  GuardrailPolicy is attached to.
                 items:
                   description: |-
                     LocalPolicyTargetReference identifies an API object to apply a direct or
@@ -753,8 +753,8 @@ spec:
                 - message: rule name must be unique within the policy
                   rule: self.all(rule, self.exists_one(other, other.name == rule.name))
               targetRefs:
-                description: TargetRefs are the names of the AIServiceBackend resources
-                  this GuardrailPolicy is attached to.
+                description: TargetRefs identify the AIServiceBackend resources this
+                  GuardrailPolicy is attached to.
                 items:
                   description: |-
                     LocalPolicyTargetReference identifies an API object to apply a direct or

@@ -30,7 +30,7 @@ type GuardrailPolicy struct {
 
 // GuardrailPolicySpec contains the configured checks attached to an AIServiceBackend.
 type GuardrailPolicySpec struct {
-	// TargetRefs are the names of the AIServiceBackend resources this GuardrailPolicy is attached to.
+	// TargetRefs identify the AIServiceBackend resources this GuardrailPolicy is attached to.
 	//
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16

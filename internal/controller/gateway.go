@@ -431,7 +431,7 @@ func (c *GatewayController) reconcileFilterConfigSecret(
 		routeBackendNamesSet := map[string]struct{}{}
 		routeBackendNames := []string{}
 		injectedQuotaCosts := make(map[string]struct{})
-		injectedGuardrails := make(map[string]struct{})
+		injectedGuardrailKeys := make(map[string]struct{})
 		for ruleIndex := range spec.Rules {
 			rule := &spec.Rules[ruleIndex]
 			for _, m := range rule.Matches {
@@ -559,7 +559,7 @@ func (c *GatewayController) reconcileFilterConfigSecret(
 			// Inject QuotaPolicy cost expressions as LLMRequestCost entries so ext_proc
 			// computes and stores them in metadata for the HitsAddend to read.
 			c.injectQuotaPolicyCostExpressions(ctx, aiGatewayRoute, ec, injectedQuotaCosts, routeName)
-			if guardrailErr := c.injectGuardrails(ctx, aiGatewayRoute, ec, injectedGuardrails); guardrailErr != nil {
+			if guardrailErr := c.injectGuardrails(ctx, aiGatewayRoute, ec, injectedGuardrailKeys); guardrailErr != nil {
 				return false, fmt.Errorf("failed to inject guardrails for route %s: %w", aiGatewayRoute.Name, guardrailErr)
 			}
 
