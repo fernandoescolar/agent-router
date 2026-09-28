@@ -189,10 +189,10 @@ type AzureContentSafetyGuardrailProvider struct {
 
 // HTTPGuardrailProvider configures calls to a custom guardrail service.
 //
-// The gateway sends a JSON request of the form
-// {"text": "...", "context": {"stage": "input"}} to endpoint+path and expects a
-// normalized response of the form
-// {"action": "allow|block|modify", "findings": [{"type": "PII", "start": 0, "end": 4, "score": 0.9}], "replacement": "..."}.
+// For each extracted text fragment, the gateway sends a JSON POST request with the
+// text and an evaluation context (stage "input" or "output") to endpoint+path. The
+// service returns a normalized response with an action ("allow", "block", or "modify"),
+// optional findings (type, start, end, score), and an optional replacement text.
 // Finding offsets are Unicode code point positions in text; end is exclusive.
 type HTTPGuardrailProvider struct {
 	// Endpoint is the base URL of the guardrail service.
