@@ -575,6 +575,10 @@ func guardrailPolicySecretRefsIndexFunc(o client.Object) []string {
 			if provider.AzureContentSafety != nil {
 				ref = provider.AzureContentSafety.APIKeySecretRef
 			}
+		case aigv1b1.GuardrailProviderTypeHTTP:
+			if provider.HTTP != nil {
+				ref = provider.HTTP.APIKeySecretRef
+			}
 		}
 		if ref != nil {
 			namespace := policy.Namespace

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -159,6 +160,19 @@ func (c *GuardrailPolicyController) validateGuardrailProvider(ctx context.Contex
 			return err
 		}
 		return c.validateGuardrailSecret(ctx, namespace, provider.AzureContentSafety.APIKeySecretRef, "apiKey")
+	case aigv1b1.GuardrailProviderTypeHTTP:
+		if provider.HTTP == nil {
+			return fmt.Errorf("http guardrail configuration is required")
+		}
+		if err := validateGuardrailEndpoint(provider.HTTP.Endpoint); err != nil {
+			return err
+		}
+		if provider.HTTP.Path != "" && !strings.HasPrefix(provider.HTTP.Path, "/") {
+			return fmt.Errorf("http guardrail path must start with /")
+		}
+		if provider.HTTP.APIKeySecretRef != nil {
+			return c.validateGuardrailSecret(ctx, namespace, provider.HTTP.APIKeySecretRef, "apiKey")
+		}
 	default:
 		return fmt.Errorf("unsupported provider type %q", provider.Type)
 	}

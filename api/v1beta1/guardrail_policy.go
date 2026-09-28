@@ -81,15 +81,16 @@ const (
 )
 
 // GuardrailProvider describes the implementation used to evaluate a rule.
-// +kubebuilder:validation:XValidation:rule="self.type != 'Regex' || (has(self.pattern) && self.pattern != ” && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))",message="Regex requires pattern and no external provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))",message="Presidio requires only presidio provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock) && !has(self.presidio) && !has(self.azureContentSafety))",message="Bedrock requires only bedrock provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'AzureContentSafety' || (!has(self.pattern) && has(self.azureContentSafety) && !has(self.presidio) && !has(self.bedrock))",message="AzureContentSafety requires only azureContentSafety provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Regex' || (has(self.pattern) && size(self.pattern) > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http))",message="Regex requires pattern and no external provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http))",message="Presidio requires only presidio provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock) && !has(self.presidio) && !has(self.azureContentSafety) && !has(self.http))",message="Bedrock requires only bedrock provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'AzureContentSafety' || (!has(self.pattern) && has(self.azureContentSafety) && !has(self.presidio) && !has(self.bedrock) && !has(self.http))",message="AzureContentSafety requires only azureContentSafety provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'HTTP' || (!has(self.pattern) && has(self.http) && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))",message="HTTP requires only http provider configuration"
 // +kubebuilder:validation:XValidation:rule="self.action != 'Mask' || self.type != 'AzureContentSafety'",message="AzureContentSafety does not support Mask"
 type GuardrailProvider struct {
 	// Type identifies the guardrail implementation.
 	//
-	// +kubebuilder:validation:Enum=Regex;Presidio;Bedrock;AzureContentSafety
+	// +kubebuilder:validation:Enum=Regex;Presidio;Bedrock;AzureContentSafety;HTTP
 	Type GuardrailProviderType `json:"type"`
 	// Pattern is used for deterministic regex-based evaluations.
 	//
@@ -101,7 +102,7 @@ type GuardrailProvider struct {
 	// +kubebuilder:default=Block
 	// +kubebuilder:validation:Enum=Block;Monitor;Mask
 	Action GuardrailAction `json:"action,omitempty"`
-	// MaskReplacement is used by Regex and Presidio Mask actions.
+	// MaskReplacement is used by Regex, Presidio, and HTTP Mask actions.
 	// +optional
 	// +kubebuilder:default="[REDACTED]"
 	MaskReplacement string `json:"maskReplacement,omitempty"`
@@ -121,6 +122,10 @@ type GuardrailProvider struct {
 	//
 	// +optional
 	AzureContentSafety *AzureContentSafetyGuardrailProvider `json:"azureContentSafety,omitempty"`
+	// HTTP configures a custom guardrail service that implements the generic guardrail HTTP contract.
+	//
+	// +optional
+	HTTP *HTTPGuardrailProvider `json:"http,omitempty"`
 	// TimeoutSeconds limits each external provider evaluation.
 	// +optional
 	// +kubebuilder:default=10
@@ -182,6 +187,27 @@ type AzureContentSafetyGuardrailProvider struct {
 	APIKeySecretRef *gwapiv1.SecretObjectReference `json:"apiKeySecretRef"`
 }
 
+// HTTPGuardrailProvider configures calls to a custom guardrail service.
+//
+// The gateway sends a JSON request of the form
+// {"text": "...", "context": {"stage": "input"}} to endpoint+path and expects a
+// normalized response of the form
+// {"action": "allow|block|modify", "findings": [{"type": "PII", "start": 0, "end": 4, "score": 0.9}], "replacement": "..."}.
+// Finding offsets are Unicode code point positions in text; end is exclusive.
+type HTTPGuardrailProvider struct {
+	// Endpoint is the base URL of the guardrail service.
+	// +kubebuilder:validation:Format=uri
+	Endpoint string `json:"endpoint"`
+	// Path is appended to the endpoint for each evaluation.
+	// +optional
+	// +kubebuilder:default="/analyze"
+	// +kubebuilder:validation:Pattern=`^/.*$`
+	Path string `json:"path,omitempty"`
+	// APIKeySecretRef optionally references a Secret whose apiKey entry is sent as a Bearer token.
+	// +optional
+	APIKeySecretRef *gwapiv1.SecretObjectReference `json:"apiKeySecretRef,omitempty"`
+}
+
 // GuardrailProviderType is the guardrail implementation.
 type GuardrailProviderType string
 
@@ -190,6 +216,7 @@ const (
 	GuardrailProviderTypePresidio           GuardrailProviderType = "Presidio"
 	GuardrailProviderTypeBedrockGuardrails  GuardrailProviderType = "Bedrock"
 	GuardrailProviderTypeAzureContentSafety GuardrailProviderType = "AzureContentSafety"
+	GuardrailProviderTypeHTTP               GuardrailProviderType = "HTTP"
 )
 
 // GuardrailAction defines the safeguard action.

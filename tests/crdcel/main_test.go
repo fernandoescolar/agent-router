@@ -175,6 +175,8 @@ func TestGuardrailPolicies(t *testing.T) {
 		{name: "invalid_endpoint.yaml", expErr: "Invalid value"},
 		{name: "duplicate_rule_names.yaml", expErr: "rule name must be unique within the policy"},
 		{name: "azure_mask.yaml", expErr: "AzureContentSafety does not support Mask"},
+		{name: "http_mismatch.yaml", expErr: "HTTP requires only http provider configuration"},
+		{name: "http_invalid_path.yaml", expErr: "should match '^/.*$'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := testdata.ReadFile(path.Join("testdata/guardrailpolicies", tc.name))

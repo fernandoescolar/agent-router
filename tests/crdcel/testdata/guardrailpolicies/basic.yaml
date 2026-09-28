@@ -52,3 +52,13 @@ spec:
           endpoint: https://content-safety.example.com
           apiKeySecretRef:
             name: azure-key
+    - name: custom-http
+      phase: Request
+      provider:
+        type: HTTP
+        action: Mask
+        http:
+          endpoint: https://guardrail.example.com
+          path: /v1/analyze
+          apiKeySecretRef:
+            name: custom-guardrail-key

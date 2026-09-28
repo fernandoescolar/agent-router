@@ -27,6 +27,7 @@
     - [Presidio](#presidio)
     - [AWS Bedrock Guardrails](#aws-bedrock-guardrails)
     - [Azure AI Content Safety](#azure-ai-content-safety)
+    - [Custom HTTP Guardrails](#custom-http-guardrails)
   - [Payload Extraction](#payload-extraction)
   - [Credentials and Security](#credentials-and-security)
   - [Status and Reconciliation](#status-and-reconciliation)
@@ -37,6 +38,7 @@
     - [Configure Guardrails Directly on AIGatewayRoute](#configure-guardrails-directly-on-aigatewayroute)
     - [Use BackendSecurityPolicy](#use-backendsecuritypolicy)
     - [Use Only Provider-Native Model Guardrails](#use-only-provider-native-model-guardrails)
+    - [Invoke Local Executables for Custom Guardrails](#invoke-local-executables-for-custom-guardrails)
   - [Implementation Plan](#implementation-plan)
   - [Testing Strategy](#testing-strategy)
   - [Current Implementation and Gaps](#current-implementation-and-gaps)
@@ -44,7 +46,7 @@
 
 ## Summary
 
-This proposal introduces `GuardrailPolicy`, a backend-attached policy for evaluating LLM request and response content before it is sent to an AI provider or returned to a client. The policy provides a common API for local regular-expression checks and external safety providers, initially Presidio, AWS Bedrock Guardrails, and Azure AI Content Safety.
+This proposal introduces `GuardrailPolicy`, a backend-attached policy for evaluating LLM request and response content before it is sent to an AI provider or returned to a client. The policy provides a common API for local regular-expression checks and external safety providers, initially Presidio, AWS Bedrock Guardrails, and Azure AI Content Safety. A generic HTTP provider defines a small, normalized contract that any custom guardrail service can implement, so providers without a native integration can be used without code changes to the gateway.
 
 The proposed implementation uses the existing Agent Router external processor. The controller resolves policies and credentials into the filter configuration, while ext-proc buffers the relevant body, extracts content, invokes the configured evaluator, and applies the selected action.
 
@@ -71,6 +73,7 @@ A native policy should allow platform administrators to:
 - Support request and response evaluation.
 - Provide a provider-neutral runtime evaluator interface.
 - Initially support Regex, Presidio, AWS Bedrock Guardrails, and Azure AI Content Safety.
+- Define a portable HTTP contract for custom guardrail services that are not natively supported.
 - Support explicit timeout and fail-open/fail-closed behavior.
 - Prevent partial delivery of blocked streaming responses.
 - Integrate with existing logs, metrics, traces, config distribution, Secret watches, and status conditions.
@@ -246,6 +249,7 @@ The provider is a tagged union. Admission validation requires exactly the config
 - `Presidio` requires `presidio`.
 - `Bedrock` requires `bedrock`.
 - `AzureContentSafety` requires `azureContentSafety`.
+- `HTTP` requires `http`.
 
 Provider-specific configuration remains nested so new provider capabilities can be added without adding unrelated fields to every rule.
 
@@ -263,6 +267,7 @@ Mask behavior depends on provider capability:
 - Presidio replaces detected spans with `maskReplacement`.
 - Bedrock uses transformed text returned by ApplyGuardrail.
 - Azure Text Analysis does not return transformed content, so admission rejects `Mask` for Azure rules.
+- HTTP uses the `replacement` text returned by the service, or replaces returned finding spans with `maskReplacement`.
 
 Mask is applied only to extracted text fields and never replaces unrelated model or configuration fields. Masked streaming responses remain buffered until the complete body has been evaluated and rewritten.
 
@@ -314,6 +319,70 @@ The Built on Envoy implementation highlights that Azure has multiple distinct sa
 - response Protected Material Detection.
 
 A future shape could add `azureContentSafety.check` and check-specific configuration. Per-category thresholds should also replace a single threshold when Text Analysis is selected. Until then, the implementation should be documented as Text Analysis over the configured evaluation input, not as complete Azure Content Safety feature parity.
+
+### Custom HTTP Guardrails
+
+Native integrations cover common providers, but organizations frequently run in-house classifiers or services that the gateway does not support yet. The `HTTP` provider defines a small, provider-neutral interface, similar in spirit to the Presidio Analyzer API, that such services implement. It lets new guardrails be adopted without gateway changes and without the security and portability concerns of invoking arbitrary local executables.
+
+```yaml
+provider:
+  type: HTTP
+  action: Mask
+  timeoutSeconds: 5
+  failureMode: FailClosed
+  http:
+    endpoint: http://custom-guardrail.guardrails.svc.cluster.local:8080
+    path: /analyze # default
+    apiKeySecretRef: # optional; sent as a bearer token
+      name: custom-guardrail-key
+```
+
+For each extracted text fragment, the gateway sends `POST {endpoint}{path}` with `Content-Type: application/json`:
+
+```json
+{
+  "text": "some user input",
+  "context": {
+    "stage": "input"
+  }
+}
+```
+
+`context.stage` is `input` for `Request` rules and `output` for `Response` rules. The `context` object is extensible; services must ignore unknown fields so the gateway can add information such as the endpoint schema or message role later.
+
+The service returns HTTP 2xx with a normalized response:
+
+```json
+{
+  "action": "allow",
+  "findings": [
+    {
+      "type": "PII",
+      "start": 10,
+      "end": 20,
+      "score": 0.92
+    }
+  ]
+}
+```
+
+| Field         | Required | Description                                                                                                                             |
+| ------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `action`      | yes      | `allow`, `block`, or `modify` (case-insensitive).                                                                                       |
+| `findings`    | no       | Detected spans. `start` and `end` are Unicode code point offsets into `text`; `end` is exclusive. `type` and `score` are informational. |
+| `replacement` | no       | Full replacement for `text`, used with `modify`.                                                                                        |
+
+The response is mapped to the provider-neutral evaluation result:
+
+- `allow`: the rule does not match. Findings are ignored.
+- `block`: the rule matches. Findings, if present, are masked with `maskReplacement` so the result can also drive a `Mask` rule.
+- `modify`: the rule matches. `replacement` is used when present; otherwise findings are masked with `maskReplacement`. A `modify` response with neither is an error.
+
+The service reports whether content violates its policy; the rule's `action` remains authoritative for enforcement. A `block` or `modify` result is therefore blocked by `Block`, recorded by `Monitor`, and rewritten by `Mask`. A `Mask` rule returns an error when the service matches content without providing a replacement or valid findings, so unmasked content is never forwarded. Invalid spans are ignored and overlapping spans are merged before masking.
+
+Non-2xx responses, malformed JSON, missing or unknown actions, and timeouts are provider errors governed by `failureMode`. Provider error bodies are truncated before they are logged. Findings, scores, and replacement text are never returned to downstream clients or recorded in metrics.
+
+Native integrations remain preferable when the provider exposes richer semantics, such as Bedrock transformed output or Azure check selection. Services can also implement this contract as a thin adapter in front of an existing provider.
 
 ## Payload Extraction
 
@@ -417,6 +486,10 @@ This makes route-level differences easy but duplicates policy across routes and 
 
 Provider-native model configuration does not cover cross-provider policy, request checks independent of inference, local Presidio deployments, or consistent gateway observability.
 
+### Invoke Local Executables for Custom Guardrails
+
+Running a user-supplied binary or script inside the ext-proc for each evaluation would allow arbitrary custom logic. It is rejected because it expands the ext-proc attack surface, requires distributing binaries into gateway pods, couples guardrail code to the gateway image and platform, and makes resource isolation, timeouts, and upgrades harder to control. The HTTP contract provides the same extensibility while keeping custom logic in an independently deployed and secured service.
+
 ## Implementation Plan
 
 1. Introduce the dual-version `GuardrailPolicy`, generated clients, CRD, and status.
@@ -428,10 +501,11 @@ Provider-native model configuration does not cover cross-provider policy, reques
 7. Add semantic payload extraction and schema-aware Mask mutation.
 8. Add Monitor mode and deterministic multi-policy composition.
 9. Add explicit request and response evaluation limits.
-10. Add provider-specific Azure check selection.
-11. Evaluate Bedrock API-key authentication.
+10. Add the generic HTTP provider and its normalized request/response contract.
+11. Add provider-specific Azure check selection.
+12. Evaluate Bedrock API-key authentication.
 
-Steps 1 through 9 describe the current implementation. Steps 10 and 11 are proposed follow-up work informed by the Built on Envoy extensions.
+Steps 1 through 10 describe the current implementation. Steps 11 and 12 are proposed follow-up work informed by the Built on Envoy extensions.
 
 ## Testing Strategy
 
@@ -439,6 +513,7 @@ Steps 1 through 9 describe the current implementation. Steps 10 and 11 are propo
 - Controller tests for target validation, Secret resolution and rotation, status, backend scoping, failure modes, and deletion.
 - Runtime tests for regex compilation and evaluator construction.
 - HTTP-stub tests for provider paths, payloads, headers, authentication, responses, malformed responses, and errors.
+- HTTP-stub tests for the custom HTTP contract: stages, paths, bearer authentication, each action, replacement and finding masking, and invalid responses.
 - Testcontainers integration with the pinned official Presidio analyzer image.
 - Credential-gated live tests for Azure AI Content Safety and AWS Bedrock Guardrails.
 - Envoy dataplane tests for request blocking, response blocking, allowed traffic, and streaming mode behavior.

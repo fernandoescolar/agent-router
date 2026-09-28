@@ -783,6 +783,22 @@ func (c *GatewayController) guardrailProviderToFilterAPI(ctx context.Context, na
 			SeverityThreshold: config.SeverityThreshold,
 			APIKey:            apiKey,
 		}
+	case aigv1b1.GuardrailProviderTypeHTTP:
+		if provider.HTTP == nil {
+			return converted, fmt.Errorf("http guardrail configuration is required")
+		}
+		config := provider.HTTP
+		converted.HTTP = &filterapi.HTTPGuardrailProvider{
+			Endpoint: config.Endpoint,
+			Path:     config.Path,
+		}
+		if config.APIKeySecretRef != nil {
+			apiKey, err := c.getGuardrailSecretData(ctx, namespace, config.APIKeySecretRef, "apiKey")
+			if err != nil {
+				return converted, err
+			}
+			converted.HTTP.APIKey = apiKey
+		}
 	default:
 		return converted, fmt.Errorf("unsupported provider type %q", provider.Type)
 	}

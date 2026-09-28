@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
@@ -46,11 +45,7 @@ func (e *presidioEvaluator) Evaluate(ctx context.Context, body []byte, _ filtera
 		payload.ScoreThreshold = &threshold
 	}
 
-	var result []struct {
-		Start int     `json:"start"`
-		End   int     `json:"end"`
-		Score float64 `json:"score"`
-	}
+	var result []textSpan
 	if err := doJSON(ctx, e.client, http.MethodPost, strings.TrimRight(e.config.Endpoint, "/")+"/analyze", payload, func(req *http.Request) {
 		if e.config.APIKey != "" {
 			req.Header.Set("Authorization", "Bearer "+e.config.APIKey)
@@ -63,24 +58,6 @@ func (e *presidioEvaluator) Evaluate(ctx context.Context, body []byte, _ filtera
 	}
 	return filterapi.GuardrailEvaluationResult{
 		Matched:     true,
-		Replacement: maskPresidioMatches(body, result, e.maskReplacement),
+		Replacement: maskSpans(body, result, e.maskReplacement),
 	}, nil
-}
-
-func maskPresidioMatches(body []byte, matches []struct {
-	Start int     `json:"start"`
-	End   int     `json:"end"`
-	Score float64 `json:"score"`
-}, replacement string,
-) []byte {
-	sort.Slice(matches, func(i, j int) bool { return matches[i].Start < matches[j].Start })
-	runes := []rune(string(body))
-	for i := len(matches) - 1; i >= 0; i-- {
-		match := matches[i]
-		if match.Start < 0 || match.End > len(runes) || match.Start >= match.End {
-			continue
-		}
-		runes = append(runes[:match.Start], append([]rune(replacement), runes[match.End:]...)...)
-	}
-	return []byte(string(runes))
 }

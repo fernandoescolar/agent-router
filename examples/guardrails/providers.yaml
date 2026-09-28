@@ -11,6 +11,14 @@ type: Opaque
 stringData:
   apiKey: replace-me
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: custom-guardrail-key
+type: Opaque
+stringData:
+  apiKey: replace-me
+---
 apiVersion: aigateway.envoyproxy.io/v1beta1
 kind: GuardrailPolicy
 metadata:
@@ -56,3 +64,16 @@ spec:
           severityThreshold: 4
           apiKeySecretRef:
             name: guardrail-provider-keys
+    - name: mask-with-custom-http-guardrail
+      phase: Request
+      provider:
+        type: HTTP
+        action: Mask
+        maskReplacement: "[REDACTED]"
+        timeoutSeconds: 5
+        failureMode: FailClosed
+        http:
+          endpoint: http://custom-guardrail.guardrails.svc.cluster.local:8080
+          path: /analyze
+          apiKeySecretRef:
+            name: custom-guardrail-key
