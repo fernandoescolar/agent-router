@@ -356,3 +356,84 @@ func TestGuardrailPolicyToRuntimeIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, evaluation.Matched)
 }
+
+func TestGuardrailHTTPProviderToRuntimeEvaluator(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		require.Equal(t, "/v1/check", req.URL.Path)
+		require.Equal(t, "Bearer custom-secret", req.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"action":"block","findings":[{"type":"PII","start":0,"end":16,"score":0.92}]}`))
+	}))
+	t.Cleanup(providerServer.Close)
+
+	kube := fakekube.NewClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-guardrail-key", Namespace: "default"},
+		Data:       map[string][]byte{"apiKey": []byte("custom-secret")},
+	})
+	controller := &GatewayController{kube: kube}
+	converted, err := controller.guardrailProviderToFilterAPI(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeHTTP,
+		HTTP: &aigv1b1.HTTPGuardrailProvider{
+			Endpoint:        providerServer.URL,
+			Path:            "/v1/check",
+			APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "custom-guardrail-key"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "custom-secret", converted.HTTP.APIKey)
+	runtimeConfig, err := filterapi.NewRuntimeConfig(t.Context(), &filterapi.Config{
+		Guardrails: []filterapi.Guardrail{{Name: "custom", Phase: filterapi.GuardrailPhaseRequest, Provider: converted}},
+	}, func(context.Context, *filterapi.BackendAuth) (filterapi.BackendAuthHandler, error) {
+		return nil, nil
+	}, guardrails.NewEvaluator)
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Guardrails, 1)
+	evaluation, err := runtimeConfig.Guardrails[0].Evaluator.Evaluate(t.Context(), []byte("user@example.com"), filterapi.GuardrailPhaseRequest)
+	require.NoError(t, err)
+	require.True(t, evaluation.Matched)
+	require.Equal(t, "[REDACTED]", string(evaluation.Replacement))
+}
+
+func TestGuardrailHTTPProviderValidation(t *testing.T) {
+	kube := fakekube.NewClientset()
+	controller := &GuardrailPolicyController{kube: kube}
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeHTTP,
+	}), "http guardrail configuration is required")
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeHTTP,
+		HTTP: &aigv1b1.HTTPGuardrailProvider{Endpoint: "not-a-url"},
+	}), "valid provider endpoint is required")
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeHTTP,
+		HTTP: &aigv1b1.HTTPGuardrailProvider{Endpoint: "https://guardrail.example.com", Path: "analyze"},
+	}), "path must start with /")
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeHTTP,
+		HTTP: &aigv1b1.HTTPGuardrailProvider{
+			Endpoint:        "https://guardrail.example.com",
+			APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "missing"},
+		},
+	}), "failed to get secret missing")
+	require.NoError(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type:   aigv1b1.GuardrailProviderTypeHTTP,
+		Action: aigv1b1.GuardrailActionMask,
+		HTTP:   &aigv1b1.HTTPGuardrailProvider{Endpoint: "https://guardrail.example.com"},
+	}))
+}
+
+func TestGuardrailPolicySecretRefsIndexIncludesHTTPProvider(t *testing.T) {
+	policy := &aigv1b1.GuardrailPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom", Namespace: "default"},
+		Spec: aigv1b1.GuardrailPolicySpec{Rules: []aigv1b1.GuardrailRule{{
+			Name: "custom", Phase: aigv1b1.GuardrailPhaseRequest,
+			Provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeHTTP,
+				HTTP: &aigv1b1.HTTPGuardrailProvider{
+					Endpoint:        "https://guardrail.example.com",
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "custom-guardrail-key"},
+				},
+			},
+		}}},
+	}
+	require.Equal(t, []string{"custom-guardrail-key.default"}, guardrailPolicySecretRefsIndexFunc(policy))
+}

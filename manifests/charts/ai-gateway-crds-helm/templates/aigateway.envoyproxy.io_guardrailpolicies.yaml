@@ -238,10 +238,71 @@ spec:
                           - FailClosed
                           - FailOpen
                           type: string
+                        http:
+                          description: HTTP configures a custom guardrail service
+                            that implements the generic guardrail HTTP contract.
+                          properties:
+                            apiKeySecretRef:
+                              description: APIKeySecretRef optionally references a
+                                Secret whose apiKey entry is sent as a Bearer token.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              description: Endpoint is the base URL of the guardrail
+                                service.
+                              format: uri
+                              type: string
+                            path:
+                              default: /analyze
+                              description: Path is appended to the endpoint for each
+                                evaluation.
+                              pattern: ^/.*$
+                              type: string
+                          required:
+                          - endpoint
+                          type: object
                         maskReplacement:
                           default: '[REDACTED]'
-                          description: MaskReplacement is used by Regex and Presidio
-                            Mask actions.
+                          description: MaskReplacement is used by Regex, Presidio,
+                            and HTTP Mask actions.
                           type: string
                         message:
                           description: Message is returned to the caller when the
@@ -326,25 +387,32 @@ spec:
                           - Presidio
                           - Bedrock
                           - AzureContentSafety
+                          - HTTP
                           type: string
                       required:
                       - type
                       type: object
                       x-kubernetes-validations:
                       - message: Regex requires pattern and no external provider configuration
-                        rule: self.type != 'Regex' || (has(self.pattern) && self.pattern
-                          != ” && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
+                        rule: self.type != 'Regex' || (has(self.pattern) && size(self.pattern)
+                          > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety)
+                          && !has(self.http))
                       - message: Presidio requires only presidio provider configuration
                         rule: self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio)
-                          && !has(self.bedrock) && !has(self.azureContentSafety))
+                          && !has(self.bedrock) && !has(self.azureContentSafety) &&
+                          !has(self.http))
                       - message: Bedrock requires only bedrock provider configuration
                         rule: self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock)
-                          && !has(self.presidio) && !has(self.azureContentSafety))
+                          && !has(self.presidio) && !has(self.azureContentSafety)
+                          && !has(self.http))
                       - message: AzureContentSafety requires only azureContentSafety
                           provider configuration
                         rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
                           && has(self.azureContentSafety) && !has(self.presidio) &&
-                          !has(self.bedrock))
+                          !has(self.bedrock) && !has(self.http))
+                      - message: HTTP requires only http provider configuration
+                        rule: self.type != 'HTTP' || (!has(self.pattern) && has(self.http)
+                          && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
                       - message: AzureContentSafety does not support Mask
                         rule: self.action != 'Mask' || self.type != 'AzureContentSafety'
                   required:
@@ -682,10 +750,71 @@ spec:
                           - FailClosed
                           - FailOpen
                           type: string
+                        http:
+                          description: HTTP configures a custom guardrail service
+                            that implements the generic guardrail HTTP contract.
+                          properties:
+                            apiKeySecretRef:
+                              description: APIKeySecretRef optionally references a
+                                Secret whose apiKey entry is sent as a Bearer token.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              description: Endpoint is the base URL of the guardrail
+                                service.
+                              format: uri
+                              type: string
+                            path:
+                              default: /analyze
+                              description: Path is appended to the endpoint for each
+                                evaluation.
+                              pattern: ^/.*$
+                              type: string
+                          required:
+                          - endpoint
+                          type: object
                         maskReplacement:
                           default: '[REDACTED]'
-                          description: MaskReplacement is used by Regex and Presidio
-                            Mask actions.
+                          description: MaskReplacement is used by Regex, Presidio,
+                            and HTTP Mask actions.
                           type: string
                         message:
                           description: Message is returned to the caller when the
@@ -770,25 +899,32 @@ spec:
                           - Presidio
                           - Bedrock
                           - AzureContentSafety
+                          - HTTP
                           type: string
                       required:
                       - type
                       type: object
                       x-kubernetes-validations:
                       - message: Regex requires pattern and no external provider configuration
-                        rule: self.type != 'Regex' || (has(self.pattern) && self.pattern
-                          != ” && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
+                        rule: self.type != 'Regex' || (has(self.pattern) && size(self.pattern)
+                          > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety)
+                          && !has(self.http))
                       - message: Presidio requires only presidio provider configuration
                         rule: self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio)
-                          && !has(self.bedrock) && !has(self.azureContentSafety))
+                          && !has(self.bedrock) && !has(self.azureContentSafety) &&
+                          !has(self.http))
                       - message: Bedrock requires only bedrock provider configuration
                         rule: self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock)
-                          && !has(self.presidio) && !has(self.azureContentSafety))
+                          && !has(self.presidio) && !has(self.azureContentSafety)
+                          && !has(self.http))
                       - message: AzureContentSafety requires only azureContentSafety
                           provider configuration
                         rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
                           && has(self.azureContentSafety) && !has(self.presidio) &&
-                          !has(self.bedrock))
+                          !has(self.bedrock) && !has(self.http))
+                      - message: HTTP requires only http provider configuration
+                        rule: self.type != 'HTTP' || (!has(self.pattern) && has(self.http)
+                          && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
                       - message: AzureContentSafety does not support Mask
                         rule: self.action != 'Mask' || self.type != 'AzureContentSafety'
                   required:

@@ -85,6 +85,7 @@ type GuardrailProvider struct {
 	Presidio           *PresidioGuardrailProvider           `json:"presidio,omitempty"`
 	Bedrock            *BedrockGuardrailProvider            `json:"bedrock,omitempty"`
 	AzureContentSafety *AzureContentSafetyGuardrailProvider `json:"azureContentSafety,omitempty"`
+	HTTP               *HTTPGuardrailProvider               `json:"http,omitempty"`
 	TimeoutSeconds     int32                                `json:"timeoutSeconds,omitempty"`
 	FailureMode        GuardrailFailureMode                 `json:"failureMode,omitempty"`
 }
@@ -122,6 +123,13 @@ type AzureContentSafetyGuardrailProvider struct {
 	APIKey            string `json:"apiKey"`
 }
 
+// HTTPGuardrailProvider configures a request to a custom guardrail service implementing the generic HTTP contract.
+type HTTPGuardrailProvider struct {
+	Endpoint string `json:"endpoint"`
+	Path     string `json:"path,omitempty"`
+	APIKey   string `json:"apiKey,omitempty"`
+}
+
 // GuardrailProviderType identifies a guardrail implementation.
 type GuardrailProviderType string
 
@@ -130,6 +138,7 @@ const (
 	GuardrailProviderTypePresidio           GuardrailProviderType = "Presidio"
 	GuardrailProviderTypeBedrockGuardrails  GuardrailProviderType = "Bedrock"
 	GuardrailProviderTypeAzureContentSafety GuardrailProviderType = "AzureContentSafety"
+	GuardrailProviderTypeHTTP               GuardrailProviderType = "HTTP"
 )
 
 // GuardrailAction is the action taken when the rule matches.

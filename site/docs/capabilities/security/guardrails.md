@@ -6,7 +6,7 @@ sidebar_position: 9
 
 # Content Guardrails
 
-`GuardrailPolicy` evaluates request or response payloads for an `AIServiceBackend`. Rules can use local regular expressions or external content-safety providers.
+`GuardrailPolicy` evaluates request or response payloads for an `AIServiceBackend`. Rules can use local regular expressions, native integrations with external content-safety providers, or any custom guardrail service that implements a small HTTP contract.
 
 ## Apply a regex guardrail
 
@@ -38,7 +38,7 @@ Rules support three actions:
 
 - `Block` rejects matching traffic.
 - `Monitor` records matching traffic without blocking or changing it.
-- `Mask` replaces detected text. Regex and Presidio use `maskReplacement`; Bedrock uses transformed output returned by the provider. Azure Text Analysis does not support Mask.
+- `Mask` replaces detected text. Regex and Presidio use `maskReplacement`; Bedrock uses transformed output returned by the provider; HTTP uses the returned `replacement` or masks returned findings with `maskReplacement`. Azure Text Analysis does not support Mask.
 
 When multiple policies target one backend, policies are evaluated in namespace/name order and rules retain declaration order. The first Block result stops evaluation.
 
@@ -92,6 +92,104 @@ provider:
 ```
 
 The referenced Secret must contain an `apiKey` entry.
+
+### Custom HTTP guardrails
+
+Use the `HTTP` provider to integrate a guardrail service that has no native integration, such as an in-house classifier. The gateway calls the service over HTTP instead of running local executables.
+
+```yaml
+provider:
+  type: HTTP
+  action: Mask
+  timeoutSeconds: 5
+  failureMode: FailClosed
+  http:
+    endpoint: http://custom-guardrail.guardrails.svc.cluster.local:8080
+    path: /analyze
+    apiKeySecretRef:
+      name: custom-guardrail-key
+```
+
+`path` defaults to `/analyze`. When `apiKeySecretRef` is set, the Secret must contain an `apiKey` entry, sent as a bearer token.
+
+#### Request
+
+For each extracted text fragment, the gateway sends `POST {endpoint}{path}`:
+
+```json
+{
+  "text": "some user input",
+  "context": {
+    "stage": "input"
+  }
+}
+```
+
+`context.stage` is `input` for `Request` rules and `output` for `Response` rules. Services should ignore unknown fields, because more context may be added later.
+
+#### Response
+
+The service must return HTTP 2xx with:
+
+```json
+{
+  "action": "allow",
+  "findings": [
+    {
+      "type": "PII",
+      "start": 10,
+      "end": 20,
+      "score": 0.92
+    }
+  ]
+}
+```
+
+| Field         | Required | Description                                                                                                                               |
+| ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `action`      | yes      | `allow`, `block`, or `modify`.                                                                                                            |
+| `findings`    | no       | Detected spans. `start` and `end` are Unicode code point offsets into `text`, with `end` exclusive. `type` and `score` are informational. |
+| `replacement` | no       | Replacement text for the whole fragment, used with `modify`.                                                                              |
+
+The gateway interprets the response as follows:
+
+| Service `action` | Result                                                                                                      |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| `allow`          | The rule does not match.                                                                                    |
+| `block`          | The rule matches. Findings, if present, are masked with `maskReplacement` for `Mask` rules.                 |
+| `modify`         | The rule matches. `replacement` is used when present; otherwise findings are masked with `maskReplacement`. |
+
+The rule's `action` decides what happens on a match: `Block` rejects the request or response, `Monitor` records it, and `Mask` rewrites the fragment. A `Mask` rule fails when the service reports a match without a replacement or valid findings, so unmasked content is never forwarded.
+
+Non-2xx responses, invalid JSON, and missing or unknown actions are provider errors handled by `failureMode`.
+
+A minimal service that blocks prompts containing a keyword could look like this:
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class Context(BaseModel):
+    stage: str
+
+class Request(BaseModel):
+    text: str
+    context: Context
+
+@app.post("/analyze")
+def analyze(req: Request):
+    start = req.text.lower().find("confidential")
+    if start < 0:
+        return {"action": "allow"}
+    return {
+        "action": "block",
+        "findings": [{"type": "KEYWORD", "start": start, "end": start + len("confidential"), "score": 1.0}],
+    }
+```
+
+Python string indexes are Unicode code points, which matches the offsets expected by the gateway.
 
 ## Failure behavior
 

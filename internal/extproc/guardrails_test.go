@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
 
@@ -17,6 +19,7 @@ import (
 
 	"github.com/envoyproxy/ai-gateway/internal/endpointspec"
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
+	"github.com/envoyproxy/ai-gateway/internal/guardrails"
 	"github.com/envoyproxy/ai-gateway/internal/metrics"
 	"github.com/envoyproxy/ai-gateway/internal/tracing/tracingapi"
 )
@@ -241,4 +244,64 @@ func TestGuardrailPayloadLimit(t *testing.T) {
 	guardrail.Provider.FailureMode = filterapi.GuardrailFailureModeFailOpen
 	_, err = evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{guardrail}, []byte(`{"content":"secret"}`))
 	require.True(t, isGuardrailFailOpenError(err))
+}
+
+func TestGuardrailHTTPProviderActions(t *testing.T) {
+	body := []byte(`{"model":"safe-model","messages":[{"role":"user","content":"call me at 555-0100"}]}`)
+	for _, tc := range []struct {
+		name         string
+		response     string
+		action       filterapi.GuardrailAction
+		expViolation bool
+		expMonitored bool
+		expMasked    bool
+		expBody      string
+		expErr       string
+	}{
+		{name: "allow passes through", response: `{"action":"allow"}`, expBody: string(body)},
+		{name: "block blocks", response: `{"action":"block"}`, expViolation: true, expBody: string(body)},
+		{name: "block with monitor records", response: `{"action":"block"}`, action: filterapi.GuardrailActionMonitor, expMonitored: true, expBody: string(body)},
+		{
+			name:      "findings masked",
+			response:  `{"action":"modify","findings":[{"type":"PHONE","start":11,"end":19,"score":0.9}]}`,
+			action:    filterapi.GuardrailActionMask,
+			expMasked: true,
+			expBody:   `{"model":"safe-model","messages":[{"role":"user","content":"call me at [REDACTED]"}]}`,
+		},
+		{
+			name:      "replacement applied",
+			response:  `{"action":"modify","replacement":"call me later"}`,
+			action:    filterapi.GuardrailActionMask,
+			expMasked: true,
+			expBody:   `{"model":"safe-model","messages":[{"role":"user","content":"call me later"}]}`,
+		},
+		{name: "block without findings cannot mask", response: `{"action":"block"}`, action: filterapi.GuardrailActionMask, expErr: "returned no masked content"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.response))
+			}))
+			t.Cleanup(server.Close)
+			provider := filterapi.GuardrailProvider{
+				Type:   filterapi.GuardrailProviderTypeHTTP,
+				Action: tc.action,
+				HTTP:   &filterapi.HTTPGuardrailProvider{Endpoint: server.URL},
+			}
+			evaluator, err := guardrails.NewEvaluator(t.Context(), &provider)
+			require.NoError(t, err)
+
+			outcome, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{{
+				Name: "custom", Phase: filterapi.GuardrailPhaseRequest, Provider: provider, Evaluator: evaluator,
+			}}, body)
+			if tc.expErr != "" {
+				require.ErrorContains(t, err, tc.expErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expViolation, outcome.Violation != nil)
+			require.Equal(t, tc.expMonitored, outcome.Monitored)
+			require.Equal(t, tc.expMasked, outcome.Masked)
+			require.JSONEq(t, tc.expBody, string(outcome.Body))
+		})
+	}
 }

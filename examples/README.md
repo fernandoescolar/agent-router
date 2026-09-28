@@ -43,4 +43,4 @@ Example setup for comprehensive monitoring and observability with Prometheus and
 
 ### [Guardrails](./guardrails/)
 
-Shows how to enforce request and response content policies with regex, Presidio, AWS Bedrock Guardrails, and Azure AI Content Safety.
+Shows how to enforce request and response content policies with regex, Presidio, AWS Bedrock Guardrails, Azure AI Content Safety, and custom HTTP guardrail services.
