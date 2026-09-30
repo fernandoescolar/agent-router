@@ -611,13 +611,6 @@ func guardrailPolicySecretRefsIndexFunc(o client.Object) []string {
 	return keys
 }
 
-func getSecretNameAndNamespace(secretRef *gwapiv1.SecretObjectReference, namespace string) string {
-	if secretRef.Namespace != nil {
-		return fmt.Sprintf("%s.%s", secretRef.Name, *secretRef.Namespace)
-	}
-	return fmt.Sprintf("%s.%s", secretRef.Name, namespace)
-}
-
 func getReferenceGrantIndexKey(namespace, kind string) string {
 	return fmt.Sprintf("%s.%s", namespace, kind)
 }
