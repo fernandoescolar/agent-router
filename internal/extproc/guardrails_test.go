@@ -321,3 +321,161 @@ func TestGuardrailHTTPProviderActions(t *testing.T) {
 		})
 	}
 }
+
+// guardrailProcessorCase describes one guardrail outcome exercised through a processor.
+type guardrailProcessorCase struct {
+	name       string
+	guardrail  filterapi.RuntimeGuardrail
+	wantErr    string
+	wantBlock  bool
+	wantResult metrics.GuardrailResult
+}
+
+func guardrailProcessorCases(phase filterapi.GuardrailPhase, backends []string) []guardrailProcessorCase {
+	regex := func(name string, action filterapi.GuardrailAction) filterapi.RuntimeGuardrail {
+		return filterapi.RuntimeGuardrail{
+			Name: name, Phase: phase, Backends: backends,
+			Provider: filterapi.GuardrailProvider{
+				Type: filterapi.GuardrailProviderTypeRegex, Action: action, MaskReplacement: "[MASKED]", Message: "blocked",
+			},
+			Matcher: regexp.MustCompile("secret"),
+		}
+	}
+	failing := func(mode filterapi.GuardrailFailureMode) filterapi.RuntimeGuardrail {
+		return filterapi.RuntimeGuardrail{
+			Name: "provider", Phase: phase, Backends: backends,
+			Provider:  filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypePresidio, FailureMode: mode},
+			Evaluator: &failingGuardrailEvaluator{},
+		}
+	}
+	return []guardrailProcessorCase{
+		{name: "block", guardrail: regex("deny", filterapi.GuardrailActionBlock), wantBlock: true, wantResult: metrics.GuardrailResultBlocked},
+		{name: "monitor", guardrail: regex("monitor", filterapi.GuardrailActionMonitor), wantResult: metrics.GuardrailResultMonitored},
+		{name: "mask", guardrail: regex("mask", filterapi.GuardrailActionMask), wantResult: metrics.GuardrailResultMasked},
+		{name: "fail open", guardrail: failing(filterapi.GuardrailFailureModeFailOpen), wantResult: metrics.GuardrailResultError},
+		{name: "fail closed", guardrail: failing(filterapi.GuardrailFailureModeFailClosed), wantErr: "guardrails", wantResult: metrics.GuardrailResultError},
+	}
+}
+
+func TestRouterRequestGuardrailOutcomes(t *testing.T) {
+	for _, test := range guardrailProcessorCases(filterapi.GuardrailPhaseRequest, nil) {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := &recordingGuardrailMetrics{}
+			span := &mockGuardrailChatCompletionSpan{}
+			factory := NewFactory(nil, recorder, &mockTracer{returnedSpan: span}, endpointspec.ChatCompletionsEndpointSpec{})
+			processor, err := factory(&filterapi.RuntimeConfig{Guardrails: []filterapi.RuntimeGuardrail{test.guardrail}}, map[string]string{
+				"content-type": "application/json",
+				":path":        "/v1/chat/completions",
+			}, slog.Default(), false, false)
+			require.NoError(t, err)
+
+			response, err := processor.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{
+				Body: []byte(`{"model":"test","messages":[{"role":"user","content":"my secret"}]}`),
+			})
+			require.Equal(t, test.wantResult, recorder.result)
+			require.Len(t, span.guardrailEvents, 1)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, "failed to evaluate request guardrails")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.wantBlock, response.GetImmediateResponse() != nil)
+			if test.wantBlock {
+				require.Equal(t, 1, span.endedOnErrorCount)
+				require.Equal(t, http.StatusForbidden, span.errorStatusCode)
+				return
+			}
+			if test.wantResult == metrics.GuardrailResultMasked {
+				require.Contains(t, string(processor.(*chatCompletionProcessorRouterFilter).originalRequestBodyRaw), "my [MASKED]")
+			}
+		})
+	}
+}
+
+func TestUpstreamRequestGuardrailOutcomes(t *testing.T) {
+	body := []byte(`{"model":"test","messages":[{"role":"user","content":"my secret"}]}`)
+	for _, test := range guardrailProcessorCases(filterapi.GuardrailPhaseRequest, []string{"backend-a"}) {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := &recordingGuardrailMetrics{}
+			span := &mockGuardrailChatCompletionSpan{}
+			parent := &chatCompletionProcessorRouterFilter{
+				config:                 &filterapi.RuntimeConfig{Guardrails: []filterapi.RuntimeGuardrail{test.guardrail}},
+				logger:                 slog.Default(),
+				originalRequestBodyRaw: body,
+				originalModel:          "test",
+				guardrailMetrics:       recorder,
+				span:                   span,
+			}
+			p := &chatCompletionProcessorUpstreamFilter{
+				parent:         parent,
+				logger:         slog.Default(),
+				requestHeaders: map[string]string{":path": "/v1/chat/completions"},
+				metrics:        &mockMetrics{},
+				backendName:    "backend-a",
+				// Stop right after the guardrail evaluation, before translation.
+				unsupportedBackendErr: errors.New("stop after guardrails"),
+			}
+
+			response, err := p.ProcessRequestHeaders(t.Context(), nil)
+			require.Equal(t, test.wantResult, recorder.result)
+			require.Len(t, span.guardrailEvents, 1)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, "failed to evaluate backend request guardrails")
+				return
+			}
+			require.NoError(t, err)
+			if test.wantBlock {
+				require.Contains(t, string(response.GetImmediateResponse().GetBody()), "GuardrailViolation")
+				require.Equal(t, 1, span.endedOnErrorCount)
+				return
+			}
+			require.Contains(t, string(response.GetImmediateResponse().GetBody()), "stop after guardrails")
+			if test.wantResult == metrics.GuardrailResultMasked {
+				require.Contains(t, string(parent.originalRequestBodyRaw), "my [MASKED]")
+				require.True(t, parent.forceBodyMutation)
+			}
+		})
+	}
+}
+
+func TestUpstreamResponseGuardrailOutcomes(t *testing.T) {
+	responseBody := []byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"my secret"}}]}`)
+	for _, test := range guardrailProcessorCases(filterapi.GuardrailPhaseResponse, []string{"backend-a"}) {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := &recordingGuardrailMetrics{}
+			span := &mockGuardrailChatCompletionSpan{}
+			p := &chatCompletionProcessorUpstreamFilter{
+				parent: &chatCompletionProcessorRouterFilter{
+					config:           &filterapi.RuntimeConfig{Guardrails: []filterapi.RuntimeGuardrail{test.guardrail}},
+					logger:           slog.Default(),
+					guardrailMetrics: recorder,
+					span:             span,
+				},
+				logger:          slog.Default(),
+				translator:      &mockTranslator{t: t, retBodyMutation: responseBody},
+				metrics:         &mockMetrics{},
+				backendName:     "backend-a",
+				responseHeaders: map[string]string{":status": "200"},
+			}
+
+			response, err := p.ProcessResponseBody(t.Context(), &extprocv3.HttpBody{Body: responseBody, EndOfStream: true})
+			require.Equal(t, test.wantResult, recorder.result)
+			require.Len(t, span.guardrailEvents, 1)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, "failed to evaluate response guardrails")
+				return
+			}
+			require.NoError(t, err)
+			if test.wantBlock {
+				require.Contains(t, string(response.GetImmediateResponse().GetBody()), "GuardrailViolation")
+				return
+			}
+			returnedBody := response.GetResponseBody().GetResponse().GetBodyMutation().GetBody()
+			if test.wantResult == metrics.GuardrailResultMasked {
+				require.Contains(t, string(returnedBody), "my [MASKED]")
+				return
+			}
+			require.Equal(t, responseBody, returnedBody)
+		})
+	}
+}

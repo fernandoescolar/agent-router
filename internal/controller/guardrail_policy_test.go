@@ -7,6 +7,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -756,4 +758,237 @@ func TestGuardrailPolicyControllerReconcileMissingTarget(t *testing.T) {
 	require.NoError(t, controllerClient.Get(t.Context(), client.ObjectKeyFromObject(policy), &updated))
 	require.Len(t, updated.Status.Conditions, 1)
 	require.Equal(t, aigv1b1.ConditionTypeNotAccepted, updated.Status.Conditions[0].Type)
+}
+
+func TestGuardrailProviderToFilterAPI(t *testing.T) {
+	const namespace = "default"
+	otherNamespace := gwapiv1.Namespace("other")
+	timeout, threshold, severity := int32(3), int32(70), int32(2)
+	kube := fakekube.NewClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-key", Namespace: namespace},
+			Data:       map[string][]byte{"apiKey": []byte("api-secret")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "aws", Namespace: namespace},
+			Data:       map[string][]byte{"credentials": []byte("[default]")},
+		},
+	)
+	controller := &GatewayController{kube: kube}
+	missing := &gwapiv1.SecretObjectReference{Name: "missing"}
+	tests := []struct {
+		name     string
+		provider aigv1b1.GuardrailProvider
+		want     filterapi.GuardrailProvider
+		wantErr  string
+	}{
+		{
+			name: "presidio",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypePresidio, TimeoutSeconds: &timeout,
+				Presidio: &aigv1b1.PresidioGuardrailProvider{
+					Endpoint: "https://presidio.example.com", Language: "es", ScoreThresholdPercent: &threshold,
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "api-key"},
+				},
+			},
+			want: filterapi.GuardrailProvider{
+				Type: filterapi.GuardrailProviderTypePresidio, TimeoutSeconds: 3,
+				Presidio: &filterapi.PresidioGuardrailProvider{
+					Endpoint: "https://presidio.example.com", Language: "es", ScoreThresholdPercent: 70, APIKey: "api-secret",
+				},
+			},
+		},
+		{
+			name: "bedrock",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &aigv1b1.BedrockGuardrailProvider{
+					Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+					Endpoint:             "https://bedrock.example.com",
+					CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "aws"},
+				},
+			},
+			want: filterapi.GuardrailProvider{
+				Type: filterapi.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &filterapi.BedrockGuardrailProvider{
+					Endpoint: "https://bedrock.example.com", Region: "us-east-1",
+					GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1", CredentialFileLiteral: "[default]",
+				},
+			},
+		},
+		{
+			name: "azure",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{
+					Endpoint: "https://content-safety.example.com", APIVersion: "2024-09-01", SeverityThreshold: &severity,
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "api-key"},
+				},
+			},
+			want: filterapi.GuardrailProvider{
+				Type: filterapi.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &filterapi.AzureContentSafetyGuardrailProvider{
+					Endpoint: "https://content-safety.example.com", APIVersion: "2024-09-01", SeverityThreshold: &severity,
+					APIKey: "api-secret",
+				},
+			},
+		},
+		{
+			name:     "regex",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "secret", Action: aigv1b1.GuardrailActionMask},
+			want:     filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeRegex, Pattern: "secret", Action: filterapi.GuardrailActionMask},
+		},
+		{
+			name:     "presidio missing configuration",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypePresidio},
+			wantErr:  "presidio configuration is required",
+		},
+		{
+			name: "presidio missing secret",
+			provider: aigv1b1.GuardrailProvider{
+				Type:     aigv1b1.GuardrailProviderTypePresidio,
+				Presidio: &aigv1b1.PresidioGuardrailProvider{Endpoint: "https://presidio.example.com", APIKeySecretRef: missing},
+			},
+			wantErr: "missing",
+		},
+		{
+			name:     "bedrock missing configuration",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeBedrockGuardrails},
+			wantErr:  "bedrock configuration is required",
+		},
+		{
+			name: "bedrock missing secret",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &aigv1b1.BedrockGuardrailProvider{
+					Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1", CredentialsSecretRef: missing,
+				},
+			},
+			wantErr: "missing",
+		},
+		{
+			name:     "azure missing configuration",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeAzureContentSafety},
+			wantErr:  "azure Content Safety configuration is required",
+		},
+		{
+			name: "azure missing secret reference",
+			provider: aigv1b1.GuardrailProvider{
+				Type:               aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{Endpoint: "https://content-safety.example.com"},
+			},
+			wantErr: "secret reference is required",
+		},
+		{
+			name: "azure cross-namespace secret",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{
+					Endpoint:        "https://content-safety.example.com",
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "api-key", Namespace: &otherNamespace},
+				},
+			},
+			wantErr: "cross-namespace guardrail secret references are not supported",
+		},
+		{
+			name:     "http missing configuration",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeHTTP},
+			wantErr:  "http guardrail configuration is required",
+		},
+		{
+			name: "http missing secret",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeHTTP,
+				HTTP: &aigv1b1.HTTPGuardrailProvider{Endpoint: "https://guardrail.example.com", APIKeySecretRef: missing},
+			},
+			wantErr: "missing",
+		},
+		{
+			name: "model armor missing secret",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeModelArmor,
+				ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{
+					Project: "project-id", Location: "us-central1", Template: "template-id", CredentialsSecretRef: missing,
+				},
+			},
+			wantErr: "missing",
+		},
+		{
+			name:     "unsupported provider",
+			provider: aigv1b1.GuardrailProvider{Type: "Unknown"},
+			wantErr:  `unsupported provider type "Unknown"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			converted, err := controller.guardrailProviderToFilterAPI(t.Context(), namespace, &test.provider)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, converted)
+		})
+	}
+}
+
+func TestGuardrailMaxPayloadBytes(t *testing.T) {
+	requestLimit, responseLimit := int64(2048), int64(4096)
+	policy := &aigv1b1.GuardrailPolicy{Spec: aigv1b1.GuardrailPolicySpec{
+		MaxRequestBodyBytes: &requestLimit, MaxResponseBodyBytes: &responseLimit,
+	}}
+	require.Equal(t, requestLimit, guardrailMaxPayloadBytes(policy, aigv1b1.GuardrailPhaseRequest))
+	require.Equal(t, responseLimit, guardrailMaxPayloadBytes(policy, aigv1b1.GuardrailPhaseResponse))
+	require.Equal(t, defaultGuardrailMaxPayloadBytes, guardrailMaxPayloadBytes(&aigv1b1.GuardrailPolicy{}, aigv1b1.GuardrailPhaseResponse))
+}
+
+func TestInjectGuardrailsSkipsInjectedRulesAndForeignBackends(t *testing.T) {
+	const namespace = "default"
+	otherNamespace := gwapiv1.Namespace("other")
+	controllerClient := newGuardrailPolicyTestClient(t)
+	require.NoError(t, controllerClient.Create(t.Context(), &aigv1b1.GuardrailPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: namespace},
+		Spec: aigv1b1.GuardrailPolicySpec{
+			TargetRefs: []gwapiv1a2.LocalPolicyTargetReference{{Name: "backend"}},
+			Rules: []aigv1b1.GuardrailRule{
+				{
+					Name: "injected", Phase: aigv1b1.GuardrailPhaseRequest,
+					Provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "injected"},
+				},
+				{
+					Name: "new", Phase: aigv1b1.GuardrailPhaseResponse,
+					Provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "new"},
+				},
+			},
+		},
+	}))
+	controller := &GatewayController{client: controllerClient, kube: fakekube.NewClientset(), logger: ctrl.Log}
+	config := &filterapi.Config{}
+	route := &aigv1b1.AIGatewayRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: namespace},
+		Spec: aigv1b1.AIGatewayRouteSpec{Rules: []aigv1b1.AIGatewayRouteRule{{
+			BackendRefs: []aigv1b1.AIGatewayRouteRuleBackendRef{
+				{Name: "backend", Namespace: &otherNamespace},
+				{Name: "other-backend"},
+				{Name: "backend"},
+			},
+		}}},
+	}
+	injected := map[string]struct{}{"default/policy/injected": {}}
+	require.NoError(t, controller.injectGuardrails(t.Context(), route, config, injected))
+	require.Len(t, config.Guardrails, 1)
+	require.Equal(t, "default/policy/new", config.Guardrails[0].Name)
+	require.Equal(t, []string{"default/backend/route/route/rule/0/ref/2"}, config.Guardrails[0].Backends)
+	require.Contains(t, injected, "default/policy/new")
+}
+
+func TestInjectGuardrailsListError(t *testing.T) {
+	controllerClient := fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return errors.New("list failed")
+		},
+	}).Build()
+	controller := &GatewayController{client: controllerClient, kube: fakekube.NewClientset(), logger: ctrl.Log}
+	err := controller.injectGuardrails(t.Context(), &aigv1b1.AIGatewayRoute{}, &filterapi.Config{}, map[string]struct{}{})
+	require.ErrorContains(t, err, "failed to list GuardrailPolicies: list failed")
 }
