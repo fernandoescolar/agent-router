@@ -992,3 +992,87 @@ func TestInjectGuardrailsListError(t *testing.T) {
 	err := controller.injectGuardrails(t.Context(), &aigv1b1.AIGatewayRoute{}, &filterapi.Config{}, map[string]struct{}{})
 	require.ErrorContains(t, err, "failed to list GuardrailPolicies: list failed")
 }
+
+func TestGuardrailPolicyControllerClientErrors(t *testing.T) {
+	const namespace = "default"
+	policy := &aigv1b1.GuardrailPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: namespace},
+		Spec: aigv1b1.GuardrailPolicySpec{
+			TargetRefs: []gwapiv1a2.LocalPolicyTargetReference{{
+				Group: "aigateway.envoyproxy.io", Kind: "AIServiceBackend", Name: "backend",
+			}},
+			Rules: []aigv1b1.GuardrailRule{{
+				Name: "regex", Phase: aigv1b1.GuardrailPhaseRequest,
+				Provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "secret"},
+			}},
+		},
+	}
+	errClient := errors.New("api server unavailable")
+	newController := func(t *testing.T, funcs interceptor.Funcs) *GuardrailPolicyController {
+		builder := fake.NewClientBuilder().WithScheme(Scheme).
+			WithStatusSubresource(&aigv1b1.GuardrailPolicy{}).
+			WithObjects(policy.DeepCopy()).
+			WithInterceptorFuncs(funcs)
+		require.NoError(t, ApplyIndexing(t.Context(), func(_ context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+			builder = builder.WithIndex(obj, field, extractValue)
+			return nil
+		}))
+		return NewGuardrailPolicyController(builder.Build(), fakekube.NewClientset(), ctrl.Log, make(chan event.GenericEvent, 1))
+	}
+	failList := interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+		return errClient
+	}}
+
+	t.Run("get policy", func(t *testing.T) {
+		controller := newController(t, interceptor.Funcs{Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errClient
+		}})
+		_, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(policy)})
+		require.ErrorIs(t, err, errClient)
+	})
+
+	t.Run("get target backend", func(t *testing.T) {
+		controller := newController(t, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*aigv1b1.AIServiceBackend); ok {
+				return errClient
+			}
+			return c.Get(ctx, key, obj, opts...)
+		}})
+		_, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(policy)})
+		require.ErrorContains(t, err, "failed to get AIServiceBackend default/backend: api server unavailable")
+	})
+
+	t.Run("list policies and routes", func(t *testing.T) {
+		controller := newController(t, failList)
+		require.Nil(t, controller.SecretToGuardrailPolicy(t.Context(), &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "secret", Namespace: namespace},
+		}))
+		require.Nil(t, controller.BackendToGuardrailPolicy(t.Context(), &aigv1b1.AIServiceBackend{
+			ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: namespace},
+		}))
+		controller.notifyAIGatewayRoutesForGuardrailPolicy(t.Context(), policy)
+		require.Empty(t, controller.aiGatewayRouteChan)
+	})
+
+	t.Run("status update", func(t *testing.T) {
+		controller := newController(t, interceptor.Funcs{SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+			return errClient
+		}})
+		// The status update error is logged, not returned.
+		controller.updateGuardrailPolicyStatus(t.Context(), policy.DeepCopy(), aigv1b1.ConditionTypeAccepted, "ok")
+	})
+
+	t.Run("status update for deleted policy", func(t *testing.T) {
+		controller := newController(t, interceptor.Funcs{Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return apierrors.NewNotFound(aigv1b1.SchemeGroupVersion.WithResource("guardrailpolicies").GroupResource(), policy.Name)
+		}})
+		controller.updateGuardrailPolicyStatus(t.Context(), policy.DeepCopy(), aigv1b1.ConditionTypeAccepted, "ok")
+	})
+
+	t.Run("status get error", func(t *testing.T) {
+		controller := newController(t, interceptor.Funcs{Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errClient
+		}})
+		controller.updateGuardrailPolicyStatus(t.Context(), policy.DeepCopy(), aigv1b1.ConditionTypeAccepted, "ok")
+	})
+}
