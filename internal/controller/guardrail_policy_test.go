@@ -523,3 +523,237 @@ func TestGuardrailPolicySecretRefsIndexIncludesModelArmorProvider(t *testing.T) 
 	}
 	require.Equal(t, []string{"model-armor-sa.default"}, guardrailPolicySecretRefsIndexFunc(policy))
 }
+
+func TestGuardrailProviderValidation(t *testing.T) {
+	const namespace = "default"
+	otherNamespace := gwapiv1.Namespace("other")
+	kube := fakekube.NewClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-key", Namespace: namespace},
+			Data:       map[string][]byte{"apiKey": []byte("secret")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "string-data", Namespace: namespace},
+			StringData: map[string]string{"credentials": "[default]"},
+		},
+	)
+	controller := &GuardrailPolicyController{kube: kube}
+	tests := []struct {
+		name     string
+		provider aigv1b1.GuardrailProvider
+		wantErr  string
+	}{
+		{
+			name:     "unsupported action",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "x", Action: "Drop"},
+			wantErr:  `unsupported action "Drop"`,
+		},
+		{
+			name: "azure mask",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeAzureContentSafety, Action: aigv1b1.GuardrailActionMask,
+			},
+			wantErr: "azure Content Safety does not support mask",
+		},
+		{
+			name:     "unsupported failure mode",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "x", FailureMode: "Retry"},
+			wantErr:  `unsupported failureMode "Retry"`,
+		},
+		{
+			name:     "regex",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "secret", Action: aigv1b1.GuardrailActionMask},
+		},
+		{
+			name:     "regex missing pattern",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex},
+			wantErr:  "regex pattern is required",
+		},
+		{
+			name:     "regex invalid pattern",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "("},
+			wantErr:  "invalid regex pattern",
+		},
+		{
+			name: "presidio",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypePresidio,
+				Presidio: &aigv1b1.PresidioGuardrailProvider{
+					Endpoint:        "https://presidio.example.com",
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "api-key"},
+				},
+			},
+		},
+		{
+			name:     "presidio missing configuration",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypePresidio},
+			wantErr:  "presidio configuration is required",
+		},
+		{
+			name: "presidio invalid endpoint",
+			provider: aigv1b1.GuardrailProvider{
+				Type:     aigv1b1.GuardrailProviderTypePresidio,
+				Presidio: &aigv1b1.PresidioGuardrailProvider{Endpoint: "presidio"},
+			},
+			wantErr: "valid provider endpoint is required",
+		},
+		{
+			name: "bedrock with secret in string data",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &aigv1b1.BedrockGuardrailProvider{
+					Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+					Endpoint:             "https://bedrock.example.com",
+					CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "string-data"},
+				},
+			},
+		},
+		{
+			name: "bedrock missing identifier",
+			provider: aigv1b1.GuardrailProvider{
+				Type:    aigv1b1.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &aigv1b1.BedrockGuardrailProvider{Region: "us-east-1"},
+			},
+			wantErr: "bedrock region, guardrailIdentifier, and guardrailVersion are required",
+		},
+		{
+			name: "bedrock invalid endpoint",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &aigv1b1.BedrockGuardrailProvider{
+					Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1", Endpoint: "bedrock",
+				},
+			},
+			wantErr: "valid provider endpoint is required",
+		},
+		{
+			name: "azure",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{
+					Endpoint:        "https://content-safety.example.com",
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "api-key"},
+				},
+			},
+		},
+		{
+			name:     "azure missing configuration",
+			provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeAzureContentSafety},
+			wantErr:  "azure Content Safety configuration is required",
+		},
+		{
+			name: "azure invalid endpoint",
+			provider: aigv1b1.GuardrailProvider{
+				Type:               aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{Endpoint: "content-safety"},
+			},
+			wantErr: "valid provider endpoint is required",
+		},
+		{
+			name: "azure missing secret reference",
+			provider: aigv1b1.GuardrailProvider{
+				Type:               aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{Endpoint: "https://content-safety.example.com"},
+			},
+			wantErr: "secret reference is required",
+		},
+		{
+			name: "cross-namespace secret",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeAzureContentSafety,
+				AzureContentSafety: &aigv1b1.AzureContentSafetyGuardrailProvider{
+					Endpoint:        "https://content-safety.example.com",
+					APIKeySecretRef: &gwapiv1.SecretObjectReference{Name: "api-key", Namespace: &otherNamespace},
+				},
+			},
+			wantErr: "cross-namespace guardrail secret references are not supported",
+		},
+		{
+			name: "secret missing key",
+			provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeBedrockGuardrails,
+				Bedrock: &aigv1b1.BedrockGuardrailProvider{
+					Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+					CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "api-key"},
+				},
+			},
+			wantErr: "secret api-key does not contain key credentials",
+		},
+		{
+			name:     "unsupported provider",
+			provider: aigv1b1.GuardrailProvider{Type: "Unknown"},
+			wantErr:  `unsupported provider type "Unknown"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := controller.validateGuardrailProvider(t.Context(), namespace, &test.provider)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestBackendToGuardrailPolicy(t *testing.T) {
+	const namespace = "default"
+	controllerClient := newGuardrailPolicyTestClient(t)
+	for _, name := range []string{"targets-backend", "targets-other"} {
+		target := gwapiv1.ObjectName("backend")
+		if name == "targets-other" {
+			target = "other"
+		}
+		require.NoError(t, controllerClient.Create(t.Context(), &aigv1b1.GuardrailPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec: aigv1b1.GuardrailPolicySpec{
+				TargetRefs: []gwapiv1a2.LocalPolicyTargetReference{{
+					Group: "aigateway.envoyproxy.io", Kind: "AIServiceBackend", Name: target,
+				}},
+			},
+		}))
+	}
+	controller := NewGuardrailPolicyController(controllerClient, fakekube.NewClientset(), ctrl.Log, make(chan event.GenericEvent, 1))
+
+	requests := controller.BackendToGuardrailPolicy(t.Context(), &aigv1b1.AIServiceBackend{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: namespace},
+	})
+	require.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{
+		Namespace: namespace, Name: "targets-backend",
+	}}}, requests)
+}
+
+func TestGuardrailPolicyControllerReconcileNotFound(t *testing.T) {
+	controller := NewGuardrailPolicyController(newGuardrailPolicyTestClient(t), fakekube.NewClientset(), ctrl.Log, make(chan event.GenericEvent, 1))
+	result, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "missing"}})
+	require.NoError(t, err)
+	require.Equal(t, ctrl.Result{}, result)
+}
+
+func TestGuardrailPolicyControllerReconcileMissingTarget(t *testing.T) {
+	const namespace = "default"
+	controllerClient := newGuardrailPolicyTestClient(t)
+	policy := &aigv1b1.GuardrailPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: namespace},
+		Spec: aigv1b1.GuardrailPolicySpec{
+			TargetRefs: []gwapiv1a2.LocalPolicyTargetReference{{
+				Group: "aigateway.envoyproxy.io", Kind: "AIServiceBackend", Name: "missing",
+			}},
+			Rules: []aigv1b1.GuardrailRule{{
+				Name: "regex", Phase: aigv1b1.GuardrailPhaseRequest,
+				Provider: aigv1b1.GuardrailProvider{Type: aigv1b1.GuardrailProviderTypeRegex, Pattern: "secret"},
+			}},
+		},
+	}
+	require.NoError(t, controllerClient.Create(t.Context(), policy))
+	controller := NewGuardrailPolicyController(controllerClient, fakekube.NewClientset(), ctrl.Log, make(chan event.GenericEvent, 1))
+
+	_, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(policy)})
+	require.ErrorContains(t, err, "target AIServiceBackend default/missing not found")
+
+	var updated aigv1b1.GuardrailPolicy
+	require.NoError(t, controllerClient.Get(t.Context(), client.ObjectKeyFromObject(policy), &updated))
+	require.Len(t, updated.Status.Conditions, 1)
+	require.Equal(t, aigv1b1.ConditionTypeNotAccepted, updated.Status.Conditions[0].Type)
+}
