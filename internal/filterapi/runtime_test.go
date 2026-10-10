@@ -7,6 +7,7 @@ package filterapi
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -170,4 +171,57 @@ type testGuardrailEvaluator struct{}
 
 func (*testGuardrailEvaluator) Evaluate(context.Context, []byte, GuardrailPhase) (GuardrailEvaluationResult, error) {
 	return GuardrailEvaluationResult{}, nil
+}
+
+func TestNewRuntimeConfigGuardrails(t *testing.T) {
+	noBackendAuth := func(context.Context, *BackendAuth) (BackendAuthHandler, error) { return nil, nil }
+	failingEvaluatorFactory := func(context.Context, *GuardrailProvider) (GuardrailEvaluator, error) {
+		return nil, errors.New("bad provider")
+	}
+	tests := []struct {
+		name               string
+		guardrail          Guardrail
+		evaluatorFactories []NewGuardrailEvaluatorFunc
+		wantErr            string
+	}{
+		{
+			name:      "regex without pattern",
+			guardrail: Guardrail{Name: "regex", Provider: GuardrailProvider{Type: GuardrailProviderTypeRegex}},
+			wantErr:   `guardrail "regex" uses regex provider without a pattern`,
+		},
+		{
+			name:      "invalid regex pattern",
+			guardrail: Guardrail{Name: "regex", Provider: GuardrailProvider{Type: GuardrailProviderTypeRegex, Pattern: "("}},
+			wantErr:   `guardrail "regex" has an invalid regex pattern`,
+		},
+		{
+			name:      "external provider without evaluator factory",
+			guardrail: Guardrail{Name: "presidio", Provider: GuardrailProvider{Type: GuardrailProviderTypePresidio}},
+			wantErr:   `guardrail "presidio" uses provider "Presidio" but no evaluator factory is configured`,
+		},
+		{
+			name:               "evaluator factory error",
+			guardrail:          Guardrail{Name: "presidio", Provider: GuardrailProvider{Type: GuardrailProviderTypePresidio}},
+			evaluatorFactories: []NewGuardrailEvaluatorFunc{failingEvaluatorFactory},
+			wantErr:            `cannot create evaluator for guardrail "presidio": bad provider`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := &Config{Guardrails: []Guardrail{test.guardrail}}
+			_, err := NewRuntimeConfig(t.Context(), config, noBackendAuth, test.evaluatorFactories...)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+
+	t.Run("max payload bytes", func(t *testing.T) {
+		config := &Config{Guardrails: []Guardrail{
+			{Name: "default", Provider: GuardrailProvider{Type: GuardrailProviderTypeRegex, Pattern: "a"}},
+			{Name: "configured", MaxPayloadBytes: 2048, Provider: GuardrailProvider{Type: GuardrailProviderTypeRegex, Pattern: "a"}},
+		}}
+		rc, err := NewRuntimeConfig(t.Context(), config, noBackendAuth)
+		require.NoError(t, err)
+		require.Equal(t, defaultGuardrailMaxPayloadBytes, rc.Guardrails[0].MaxPayloadBytes)
+		require.Equal(t, int64(2048), rc.Guardrails[1].MaxPayloadBytes)
+	})
 }
