@@ -157,15 +157,31 @@ func TestRequestGuardrailMaskMutatesBody(t *testing.T) {
 
 func TestRecordGuardrailEvaluationIgnoresUnconfiguredPhase(t *testing.T) {
 	recorder := &recordingGuardrailMetrics{}
+	span := &mockGuardrailChatCompletionSpan{}
 	processor := &chatCompletionProcessorRouterFilter{
 		config: &filterapi.RuntimeConfig{Guardrails: []filterapi.RuntimeGuardrail{{
 			Phase: filterapi.GuardrailPhaseResponse,
 		}}},
 		guardrailMetrics: recorder,
+		span:             span,
 	}
 
-	processor.recordGuardrailEvaluation(t.Context(), filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
+	processor.recordGuardrailEvaluation(t.Context(), "", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
 	require.Zero(t, recorder.count)
+	require.Empty(t, span.guardrailEvents)
+
+	processor.recordGuardrailEvaluation(t.Context(), "deny-pii", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked, "", true)
+	require.Equal(t, 1, recorder.count)
+	require.Equal(t, []string{"deny-pii/Response/blocked"}, span.guardrailEvents)
+}
+
+func TestRecordGuardrailEvaluationWithoutGuardrails(t *testing.T) {
+	span := &mockGuardrailChatCompletionSpan{}
+	processor := &chatCompletionProcessorRouterFilter{config: &filterapi.RuntimeConfig{}, span: span}
+
+	processor.recordGuardrailEvaluation(t.Context(), "", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
+	processor.recordGuardrailEvaluation(t.Context(), "", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed, "backend", true)
+	require.Empty(t, span.guardrailEvents)
 }
 
 func TestBackendScopedGuardrail(t *testing.T) {

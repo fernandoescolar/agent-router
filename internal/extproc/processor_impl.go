@@ -163,20 +163,22 @@ func newRouterProcessor[ReqT, RespT, RespChunkT any, EndpointSpecT endpointspec.
 	}
 }
 
+// recordGuardrailEvaluation records the guardrail metric and span event, only when guardrails are
+// configured for the phase and backend so that unguarded traffic is not reported as evaluated.
 func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) recordGuardrailEvaluation(
 	ctx context.Context,
+	name string,
 	phase filterapi.GuardrailPhase,
 	result metrics.GuardrailResult,
 	backendName string,
 	includeGlobal bool,
 ) {
-	if r.guardrailMetrics == nil || r.config == nil || !guardrailsConfiguredForPhase(r.config.Guardrails, phase, backendName, includeGlobal) {
+	if r.config == nil || !guardrailsConfiguredForPhase(r.config.Guardrails, phase, backendName, includeGlobal) {
 		return
 	}
-	r.guardrailMetrics.RecordEvaluation(ctx, string(phase), result)
-}
-
-func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) recordGuardrailTrace(name string, phase filterapi.GuardrailPhase, result metrics.GuardrailResult) {
+	if r.guardrailMetrics != nil {
+		r.guardrailMetrics.RecordEvaluation(ctx, string(phase), result)
+	}
 	if span, ok := r.span.(tracingapi.GuardrailSpan); ok {
 		span.RecordGuardrail(name, string(phase), string(result))
 	}
@@ -355,15 +357,13 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 	)
 	outcome, guardrailErr := evaluateRequestGuardrails(ctx, r.config.Guardrails, rawBody.Body)
 	if guardrailErr != nil {
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError, "", true)
-		r.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError)
+		r.recordGuardrailEvaluation(ctx, "", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError, "", true)
 		if !isGuardrailFailOpenError(guardrailErr) {
 			return nil, fmt.Errorf("failed to evaluate request guardrails: %w", guardrailErr)
 		}
 		r.logger.Warn("request guardrail provider failed open", slog.String("error", guardrailErr.Error()))
 	} else if outcome.Violation != nil {
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked, "", true)
-		r.recordGuardrailTrace(outcome.Violation.Name, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked)
+		r.recordGuardrailEvaluation(ctx, outcome.Violation.Name, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked, "", true)
 		r.logger.Warn("request blocked by guardrail",
 			slog.String("guardrail.name", outcome.Violation.Name),
 			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseRequest)))
@@ -378,16 +378,13 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 		if err = r.updateParsedRequestAfterGuardrailMask(outcome.Body, costConfigured); err != nil {
 			return nil, err
 		}
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMasked, "", true)
-		r.recordGuardrailTrace(outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMasked)
+		r.recordGuardrailEvaluation(ctx, outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMasked, "", true)
 		r.logger.Info("request masked by guardrail", slog.String("guardrail.name", outcome.RuleName))
 	case outcome.Monitored:
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMonitored, "", true)
-		r.recordGuardrailTrace(outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMonitored)
+		r.recordGuardrailEvaluation(ctx, outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMonitored, "", true)
 		r.logger.Info("request detected by monitor guardrail", slog.String("guardrail.name", outcome.RuleName))
 	case guardrailErr == nil:
-		r.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
-		r.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
+		r.recordGuardrailEvaluation(ctx, "", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, "", true)
 	}
 
 	return &extprocv3.ProcessingResponse{
@@ -448,15 +445,13 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 	}
 	outcome, guardrailErr := evaluateBackendRequestGuardrails(ctx, configuredGuardrails, u.parent.originalRequestBodyRaw, u.backendName)
 	if guardrailErr != nil {
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError, u.backendName, false)
-		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError)
+		u.parent.recordGuardrailEvaluation(ctx, "", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultError, u.backendName, false)
 		if !isGuardrailFailOpenError(guardrailErr) {
 			return nil, fmt.Errorf("failed to evaluate backend request guardrails: %w", guardrailErr)
 		}
 		u.logger.Warn("request guardrail provider failed open", slog.String("error", guardrailErr.Error()))
 	} else if outcome.Violation != nil {
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked, u.backendName, false)
-		u.parent.recordGuardrailTrace(outcome.Violation.Name, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked)
+		u.parent.recordGuardrailEvaluation(ctx, outcome.Violation.Name, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultBlocked, u.backendName, false)
 		u.logger.Warn("request blocked by guardrail", slog.String("guardrail.name", outcome.Violation.Name), slog.String("guardrail.phase", string(filterapi.GuardrailPhaseRequest)))
 		return u.respondLocally(ctx, http.StatusForbidden, "GuardrailViolation", outcome.Violation.Message), nil
 	}
@@ -466,16 +461,13 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 		if err = u.parent.updateParsedRequestAfterGuardrailMask(outcome.Body, costConfigured); err != nil {
 			return nil, err
 		}
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMasked, u.backendName, false)
-		u.parent.recordGuardrailTrace(outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMasked)
+		u.parent.recordGuardrailEvaluation(ctx, outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMasked, u.backendName, false)
 		u.logger.Info("request masked by guardrail", slog.String("guardrail.name", outcome.RuleName))
 	case outcome.Monitored:
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMonitored, u.backendName, false)
-		u.parent.recordGuardrailTrace(outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMonitored)
+		u.parent.recordGuardrailEvaluation(ctx, outcome.RuleName, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultMonitored, u.backendName, false)
 		u.logger.Info("request detected by monitor guardrail", slog.String("guardrail.name", outcome.RuleName))
 	case guardrailErr == nil:
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, u.backendName, false)
-		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed)
+		u.parent.recordGuardrailEvaluation(ctx, "", filterapi.GuardrailPhaseRequest, metrics.GuardrailResultAllowed, u.backendName, false)
 	}
 
 	if u.unsupportedBackendErr != nil {
@@ -793,15 +785,13 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 	}
 	outcome, guardrailErr := evaluateResponseGuardrails(ctx, configuredGuardrails, guardrailBody, u.backendName)
 	if guardrailErr != nil {
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError, u.backendName, true)
-		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError)
+		u.parent.recordGuardrailEvaluation(ctx, "", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError, u.backendName, true)
 		if !isGuardrailFailOpenError(guardrailErr) {
 			return nil, fmt.Errorf("failed to evaluate response guardrails: %w", guardrailErr)
 		}
 		u.logger.Warn("response guardrail provider failed open", slog.String("error", guardrailErr.Error()))
 	} else if outcome.Violation != nil {
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked, u.backendName, true)
-		u.parent.recordGuardrailTrace(outcome.Violation.Name, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked)
+		u.parent.recordGuardrailEvaluation(ctx, outcome.Violation.Name, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultBlocked, u.backendName, true)
 		u.logger.Warn("response blocked by guardrail",
 			slog.String("guardrail.name", outcome.Violation.Name),
 			slog.String("guardrail.phase", string(filterapi.GuardrailPhaseResponse)))
@@ -812,16 +802,13 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 		bodyMutation = &extprocv3.BodyMutation{Mutation: &extprocv3.BodyMutation_Body{Body: outcome.Body}}
 		resp.GetResponseBody().Response.BodyMutation = bodyMutation
 		setHeader(headerMutation, "content-length", strconv.Itoa(len(outcome.Body)))
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultMasked, u.backendName, true)
-		u.parent.recordGuardrailTrace(outcome.RuleName, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultMasked)
+		u.parent.recordGuardrailEvaluation(ctx, outcome.RuleName, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultMasked, u.backendName, true)
 		u.logger.Info("response masked by guardrail", slog.String("guardrail.name", outcome.RuleName))
 	case outcome.Monitored:
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultMonitored, u.backendName, true)
-		u.parent.recordGuardrailTrace(outcome.RuleName, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultMonitored)
+		u.parent.recordGuardrailEvaluation(ctx, outcome.RuleName, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultMonitored, u.backendName, true)
 		u.logger.Info("response detected by monitor guardrail", slog.String("guardrail.name", outcome.RuleName))
 	case guardrailErr == nil:
-		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed, u.backendName, true)
-		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed)
+		u.parent.recordGuardrailEvaluation(ctx, "", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultAllowed, u.backendName, true)
 	}
 
 	// Remove content-encoding when translation or guardrail masking produces an uncompressed body.
