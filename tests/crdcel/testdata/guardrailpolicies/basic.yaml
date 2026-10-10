@@ -62,3 +62,23 @@ spec:
           path: /v1/analyze
           apiKeySecretRef:
             name: custom-guardrail-key
+    - name: model-armor
+      phase: Request
+      provider:
+        type: ModelArmor
+        modelArmor:
+          project: my-project
+          location: us-central1
+          template: my-template
+    - name: model-armor-mask
+      phase: Response
+      provider:
+        type: ModelArmor
+        action: Mask
+        modelArmor:
+          project: my-project
+          location: us-central1
+          template: my-template
+          endpoint: https://modelarmor.example.com
+          credentialsSecretRef:
+            name: model-armor-sa

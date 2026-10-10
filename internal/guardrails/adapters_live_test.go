@@ -74,3 +74,24 @@ func TestLiveBedrockGuardrail(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, evaluation.Matched)
 }
+
+func TestLiveModelArmor(t *testing.T) {
+	project := os.Getenv("TEST_GCP_MODEL_ARMOR_PROJECT")
+	location := os.Getenv("TEST_GCP_MODEL_ARMOR_LOCATION")
+	template := os.Getenv("TEST_GCP_MODEL_ARMOR_TEMPLATE")
+	blockedText := os.Getenv("TEST_GCP_MODEL_ARMOR_BLOCKED_TEXT")
+	if project == "" || location == "" || template == "" || blockedText == "" {
+		t.Skip("Model Armor template configuration and TEST_GCP_MODEL_ARMOR_BLOCKED_TEXT are not set")
+	}
+	provider := &filterapi.GuardrailProvider{
+		Type: filterapi.GuardrailProviderTypeModelArmor,
+		ModelArmor: &filterapi.ModelArmorGuardrailProvider{
+			Project: project, Location: location, Template: template,
+		},
+	}
+	evaluator, err := NewEvaluator(t.Context(), provider)
+	require.NoError(t, err)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte(blockedText), filterapi.GuardrailPhaseRequest)
+	require.NoError(t, err)
+	require.True(t, evaluation.Matched)
+}

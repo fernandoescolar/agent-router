@@ -38,7 +38,7 @@ Rules support three actions:
 
 - `Block` rejects matching traffic.
 - `Monitor` records matching traffic without blocking or changing it.
-- `Mask` replaces detected text. Regex and Presidio use `maskReplacement`; Bedrock uses transformed output returned by the provider; HTTP uses the returned `replacement` or masks returned findings with `maskReplacement`. Azure Text Analysis does not support Mask.
+- `Mask` replaces detected text. Regex and Presidio use `maskReplacement`; Bedrock uses transformed output returned by the provider; HTTP uses the returned `replacement` or masks returned findings with `maskReplacement`; Model Armor uses the text de-identified by its Sensitive Data Protection filter. Azure Text Analysis does not support Mask.
 
 When multiple policies target one backend, policies are evaluated in namespace/name order and rules retain declaration order. The first Block result stops evaluation.
 
@@ -92,6 +92,27 @@ provider:
 ```
 
 The referenced Secret must contain an `apiKey` entry.
+
+### Google Cloud Model Armor
+
+Model Armor screens content with a [Model Armor template](https://docs.cloud.google.com/model-armor/overview). Request rules call `sanitizeUserPrompt` and Response rules call `sanitizeModelResponse` on the regional endpoint `https://modelarmor.<location>.rep.googleapis.com`. The filters (Responsible AI, prompt injection and jailbreak, malicious URLs, and Sensitive Data Protection) and their confidence levels are configured in the template, so the rule only references it:
+
+```yaml
+provider:
+  type: ModelArmor
+  timeoutSeconds: 10
+  failureMode: FailClosed
+  modelArmor:
+    project: my-project
+    location: us-central1
+    template: my-template
+```
+
+A rule matches when Model Armor reports `MATCH_FOUND` for any filter in the template. An invocation result of `FAILURE` is treated as a provider error and follows the rule's failure mode.
+
+By default, the ext-proc uses Google Application Default Credentials, including GKE Workload Identity. The identity needs the `roles/modelarmor.user` role. For static credentials, set `credentialsSecretRef` to a Secret whose `credentials` entry contains a service account key JSON. `endpoint` can override the regional endpoint for a private endpoint. Token requests honor the `AI_GATEWAY_GCP_AUTH_PROXY_URL` proxy, like GCP backend authentication.
+
+`Mask` requires a template with advanced Sensitive Data Protection and a de-identify template; the gateway forwards the de-identified text returned by Model Armor. If any other filter also matches (for example, a jailbreak attempt), there is no safe replacement, so the rule fails instead of forwarding the content.
 
 ### Custom HTTP guardrails
 
@@ -234,11 +255,12 @@ Presidio is tested against its official analyzer image with Testcontainers. The 
 go test ./internal/guardrails -run '^TestPresidioEvaluatorContainer$' -v
 ```
 
-The Azure and Bedrock live tests are disabled unless all required environment variables for a provider are set:
+The Azure, Bedrock, and Model Armor live tests are disabled unless all required environment variables for a provider are set:
 
 - Presidio managed/external deployment: `TEST_PRESIDIO_ENDPOINT`, `TEST_PRESIDIO_BLOCKED_TEXT`, and optionally `TEST_PRESIDIO_API_KEY`.
 - Azure: `TEST_AZURE_CONTENT_SAFETY_ENDPOINT`, `TEST_AZURE_CONTENT_SAFETY_API_KEY`, and `TEST_AZURE_CONTENT_SAFETY_BLOCKED_TEXT`.
 - Bedrock: `TEST_AWS_BEDROCK_GUARDRAIL_REGION`, `TEST_AWS_BEDROCK_GUARDRAIL_ID`, `TEST_AWS_BEDROCK_GUARDRAIL_VERSION`, and `TEST_AWS_BEDROCK_GUARDRAIL_BLOCKED_TEXT`. AWS credentials use the standard credential chain.
+- Model Armor: `TEST_GCP_MODEL_ARMOR_PROJECT`, `TEST_GCP_MODEL_ARMOR_LOCATION`, `TEST_GCP_MODEL_ARMOR_TEMPLATE`, and `TEST_GCP_MODEL_ARMOR_BLOCKED_TEXT`. Google credentials use Application Default Credentials.
 
 Run them with:
 

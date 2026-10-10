@@ -308,6 +308,77 @@ spec:
                           description: Message is returned to the caller when the
                             rule blocks a request or response.
                           type: string
+                        modelArmor:
+                          description: ModelArmor configures Google Cloud Model Armor.
+                          properties:
+                            credentialsSecretRef:
+                              description: |-
+                                CredentialsSecretRef optionally references a Secret whose credentials entry contains a Google Cloud
+                                service account key JSON. When omitted, Application Default Credentials are used.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              description: Endpoint overrides the regional Model Armor
+                                endpoint, primarily for private endpoints and testing.
+                              format: uri
+                              type: string
+                            location:
+                              description: Location is the Google Cloud region of
+                                the Model Armor template, for example us-central1.
+                              minLength: 1
+                              type: string
+                            project:
+                              description: Project is the Google Cloud project ID
+                                that owns the Model Armor template.
+                              minLength: 1
+                              type: string
+                            template:
+                              description: Template is the Model Armor template ID.
+                              minLength: 1
+                              type: string
+                          required:
+                          - location
+                          - project
+                          - template
+                          type: object
                         pattern:
                           description: Pattern is used for deterministic regex-based
                             evaluations.
@@ -388,6 +459,7 @@ spec:
                           - Bedrock
                           - AzureContentSafety
                           - HTTP
+                          - ModelArmor
                           type: string
                       required:
                       - type
@@ -396,23 +468,28 @@ spec:
                       - message: Regex requires pattern and no external provider configuration
                         rule: self.type != 'Regex' || (has(self.pattern) && size(self.pattern)
                           > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety)
-                          && !has(self.http))
+                          && !has(self.http) && !has(self.modelArmor))
                       - message: Presidio requires only presidio provider configuration
                         rule: self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio)
                           && !has(self.bedrock) && !has(self.azureContentSafety) &&
-                          !has(self.http))
+                          !has(self.http) && !has(self.modelArmor))
                       - message: Bedrock requires only bedrock provider configuration
                         rule: self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock)
                           && !has(self.presidio) && !has(self.azureContentSafety)
-                          && !has(self.http))
+                          && !has(self.http) && !has(self.modelArmor))
                       - message: AzureContentSafety requires only azureContentSafety
                           provider configuration
                         rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
                           && has(self.azureContentSafety) && !has(self.presidio) &&
-                          !has(self.bedrock) && !has(self.http))
+                          !has(self.bedrock) && !has(self.http) && !has(self.modelArmor))
                       - message: HTTP requires only http provider configuration
                         rule: self.type != 'HTTP' || (!has(self.pattern) && has(self.http)
-                          && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
+                          && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety)
+                          && !has(self.modelArmor))
+                      - message: ModelArmor requires only modelArmor provider configuration
+                        rule: self.type != 'ModelArmor' || (!has(self.pattern) &&
+                          has(self.modelArmor) && !has(self.presidio) && !has(self.bedrock)
+                          && !has(self.azureContentSafety) && !has(self.http))
                       - message: AzureContentSafety does not support Mask
                         rule: self.action != 'Mask' || self.type != 'AzureContentSafety'
                   required:
@@ -820,6 +897,77 @@ spec:
                           description: Message is returned to the caller when the
                             rule blocks a request or response.
                           type: string
+                        modelArmor:
+                          description: ModelArmor configures Google Cloud Model Armor.
+                          properties:
+                            credentialsSecretRef:
+                              description: |-
+                                CredentialsSecretRef optionally references a Secret whose credentials entry contains a Google Cloud
+                                service account key JSON. When omitted, Application Default Credentials are used.
+                              properties:
+                                group:
+                                  default: ""
+                                  description: |-
+                                    Group is the group of the referent. For example, "gateway.networking.k8s.io".
+                                    When unspecified or empty string, core API group is inferred.
+                                  maxLength: 253
+                                  pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                                kind:
+                                  default: Secret
+                                  description: Kind is kind of the referent. For example
+                                    "Secret".
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
+                                  type: string
+                                name:
+                                  description: Name is the name of the referent.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace is the namespace of the referenced object. When unspecified, the local
+                                    namespace is inferred.
+
+                                    Note that when a namespace different than the local namespace is specified,
+                                    a ReferenceGrant object is required in the referent namespace to allow that
+                                    namespace's owner to accept the reference. See the ReferenceGrant
+                                    documentation for details.
+
+                                    Support: Core
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            endpoint:
+                              description: Endpoint overrides the regional Model Armor
+                                endpoint, primarily for private endpoints and testing.
+                              format: uri
+                              type: string
+                            location:
+                              description: Location is the Google Cloud region of
+                                the Model Armor template, for example us-central1.
+                              minLength: 1
+                              type: string
+                            project:
+                              description: Project is the Google Cloud project ID
+                                that owns the Model Armor template.
+                              minLength: 1
+                              type: string
+                            template:
+                              description: Template is the Model Armor template ID.
+                              minLength: 1
+                              type: string
+                          required:
+                          - location
+                          - project
+                          - template
+                          type: object
                         pattern:
                           description: Pattern is used for deterministic regex-based
                             evaluations.
@@ -900,6 +1048,7 @@ spec:
                           - Bedrock
                           - AzureContentSafety
                           - HTTP
+                          - ModelArmor
                           type: string
                       required:
                       - type
@@ -908,23 +1057,28 @@ spec:
                       - message: Regex requires pattern and no external provider configuration
                         rule: self.type != 'Regex' || (has(self.pattern) && size(self.pattern)
                           > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety)
-                          && !has(self.http))
+                          && !has(self.http) && !has(self.modelArmor))
                       - message: Presidio requires only presidio provider configuration
                         rule: self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio)
                           && !has(self.bedrock) && !has(self.azureContentSafety) &&
-                          !has(self.http))
+                          !has(self.http) && !has(self.modelArmor))
                       - message: Bedrock requires only bedrock provider configuration
                         rule: self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock)
                           && !has(self.presidio) && !has(self.azureContentSafety)
-                          && !has(self.http))
+                          && !has(self.http) && !has(self.modelArmor))
                       - message: AzureContentSafety requires only azureContentSafety
                           provider configuration
                         rule: self.type != 'AzureContentSafety' || (!has(self.pattern)
                           && has(self.azureContentSafety) && !has(self.presidio) &&
-                          !has(self.bedrock) && !has(self.http))
+                          !has(self.bedrock) && !has(self.http) && !has(self.modelArmor))
                       - message: HTTP requires only http provider configuration
                         rule: self.type != 'HTTP' || (!has(self.pattern) && has(self.http)
-                          && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))
+                          && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety)
+                          && !has(self.modelArmor))
+                      - message: ModelArmor requires only modelArmor provider configuration
+                        rule: self.type != 'ModelArmor' || (!has(self.pattern) &&
+                          has(self.modelArmor) && !has(self.presidio) && !has(self.bedrock)
+                          && !has(self.azureContentSafety) && !has(self.http))
                       - message: AzureContentSafety does not support Mask
                         rule: self.action != 'Mask' || self.type != 'AzureContentSafety'
                   required:

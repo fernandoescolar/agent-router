@@ -86,6 +86,7 @@ type GuardrailProvider struct {
 	Bedrock            *BedrockGuardrailProvider            `json:"bedrock,omitempty"`
 	AzureContentSafety *AzureContentSafetyGuardrailProvider `json:"azureContentSafety,omitempty"`
 	HTTP               *HTTPGuardrailProvider               `json:"http,omitempty"`
+	ModelArmor         *ModelArmorGuardrailProvider         `json:"modelArmor,omitempty"`
 	TimeoutSeconds     int32                                `json:"timeoutSeconds,omitempty"`
 	FailureMode        GuardrailFailureMode                 `json:"failureMode,omitempty"`
 }
@@ -130,6 +131,16 @@ type HTTPGuardrailProvider struct {
 	APIKey   string `json:"apiKey,omitempty"`
 }
 
+// ModelArmorGuardrailProvider configures a Google Cloud Model Armor sanitize request.
+type ModelArmorGuardrailProvider struct {
+	Endpoint string `json:"endpoint,omitempty"`
+	Project  string `json:"project"`
+	Location string `json:"location"`
+	Template string `json:"template"`
+	// CredentialsJSON is a service account key JSON. Empty means Application Default Credentials.
+	CredentialsJSON string `json:"credentialsJSON,omitempty"`
+}
+
 // GuardrailProviderType identifies a guardrail implementation.
 type GuardrailProviderType string
 
@@ -139,6 +150,7 @@ const (
 	GuardrailProviderTypeBedrockGuardrails  GuardrailProviderType = "Bedrock"
 	GuardrailProviderTypeAzureContentSafety GuardrailProviderType = "AzureContentSafety"
 	GuardrailProviderTypeHTTP               GuardrailProviderType = "HTTP"
+	GuardrailProviderTypeModelArmor         GuardrailProviderType = "ModelArmor"
 )
 
 // GuardrailAction is the action taken when the rule matches.

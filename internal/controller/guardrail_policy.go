@@ -173,6 +173,18 @@ func (c *GuardrailPolicyController) validateGuardrailProvider(ctx context.Contex
 		if provider.HTTP.APIKeySecretRef != nil {
 			return c.validateGuardrailSecret(ctx, namespace, provider.HTTP.APIKeySecretRef, "apiKey")
 		}
+	case aigv1b1.GuardrailProviderTypeModelArmor:
+		if provider.ModelArmor == nil || provider.ModelArmor.Project == "" || provider.ModelArmor.Location == "" || provider.ModelArmor.Template == "" {
+			return fmt.Errorf("model Armor project, location, and template are required")
+		}
+		if provider.ModelArmor.Endpoint != "" {
+			if err := validateGuardrailEndpoint(provider.ModelArmor.Endpoint); err != nil {
+				return err
+			}
+		}
+		if provider.ModelArmor.CredentialsSecretRef != nil {
+			return c.validateGuardrailSecret(ctx, namespace, provider.ModelArmor.CredentialsSecretRef, "credentials")
+		}
 	default:
 		return fmt.Errorf("unsupported provider type %q", provider.Type)
 	}

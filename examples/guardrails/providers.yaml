@@ -77,3 +77,14 @@ spec:
           path: /analyze
           apiKeySecretRef:
             name: custom-guardrail-key
+    - name: screen-with-model-armor
+      phase: Request
+      provider:
+        type: ModelArmor
+        timeoutSeconds: 10
+        failureMode: FailClosed
+        message: Request was rejected by the configured Model Armor template
+        modelArmor:
+          project: replace-me
+          location: us-central1
+          template: replace-me
