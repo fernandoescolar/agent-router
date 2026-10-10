@@ -479,3 +479,51 @@ func TestUpstreamResponseGuardrailOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateGuardrailsForPhaseEdgeCases(t *testing.T) {
+	body := []byte(`{"model":"test","messages":[{"role":"user","content":"my secret"}]}`)
+
+	t.Run("regex block without match", func(t *testing.T) {
+		outcome, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{{
+			Name: "deny", Phase: filterapi.GuardrailPhaseRequest,
+			Provider: filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeRegex},
+			Matcher:  regexp.MustCompile("forbidden"),
+		}}, body)
+		require.NoError(t, err)
+		require.Nil(t, outcome.Violation)
+		require.False(t, outcome.Monitored)
+	})
+
+	t.Run("regex mask uses default replacement", func(t *testing.T) {
+		outcome, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{{
+			Name: "mask", Phase: filterapi.GuardrailPhaseRequest,
+			Provider: filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeRegex, Action: filterapi.GuardrailActionMask},
+			Matcher:  regexp.MustCompile("secret"),
+		}}, body)
+		require.NoError(t, err)
+		require.True(t, outcome.Masked)
+		require.Contains(t, string(outcome.Body), "my [REDACTED]")
+	})
+
+	t.Run("regex mask without compiled matcher", func(t *testing.T) {
+		_, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{{
+			Name: "mask", Phase: filterapi.GuardrailPhaseRequest,
+			Provider: filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeRegex, Action: filterapi.GuardrailActionMask},
+		}}, body)
+		require.ErrorContains(t, err, `guardrail "mask" uses regex provider without a compiled matcher`)
+	})
+
+	t.Run("external provider without evaluator", func(t *testing.T) {
+		_, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{{
+			Name: "presidio", Phase: filterapi.GuardrailPhaseRequest,
+			Provider: filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypePresidio},
+		}}, body)
+		require.ErrorContains(t, err, `guardrail "presidio" uses provider "Presidio" without an evaluator`)
+	})
+}
+
+func TestReplaceGuardrailContentWholeBody(t *testing.T) {
+	replaced, err := replaceGuardrailContent([]byte("plain text"), guardrailContent{}, []byte("masked"))
+	require.NoError(t, err)
+	require.Equal(t, "masked", string(replaced))
+}

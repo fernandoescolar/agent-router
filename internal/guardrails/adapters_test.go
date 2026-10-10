@@ -13,6 +13,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
+	"github.com/envoyproxy/ai-gateway/internal/gcpauth"
 	"github.com/envoyproxy/ai-gateway/internal/json"
 )
 
@@ -249,4 +252,228 @@ func TestModelArmorEvaluatorErrors(t *testing.T) {
 	evaluation, err := evaluator.Evaluate(t.Context(), []byte("hello"), filterapi.GuardrailPhaseRequest)
 	require.False(t, evaluation.Matched)
 	require.ErrorContains(t, err, "sanitizeUserPrompt invocation failed")
+}
+
+// isolateAWSEnvironment keeps AWS credential resolution hermetic: no ambient credentials and no IMDS calls.
+func isolateAWSEnvironment(t *testing.T) {
+	t.Helper()
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "credentials"))
+}
+
+func TestNewEvaluatorProviders(t *testing.T) {
+	isolateAWSEnvironment(t)
+	severity := int32(2)
+	for _, provider := range []*filterapi.GuardrailProvider{
+		{Type: filterapi.GuardrailProviderTypeBedrockGuardrails, Bedrock: &filterapi.BedrockGuardrailProvider{
+			Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+		}},
+		{Type: filterapi.GuardrailProviderTypeAzureContentSafety, AzureContentSafety: &filterapi.AzureContentSafetyGuardrailProvider{
+			Endpoint: "https://content-safety.example.com", APIKey: "key", SeverityThreshold: &severity,
+		}},
+		{Type: filterapi.GuardrailProviderTypeHTTP, HTTP: &filterapi.HTTPGuardrailProvider{Endpoint: "https://guardrail.example.com"}},
+		{Type: filterapi.GuardrailProviderTypeModelArmor, ModelArmor: &filterapi.ModelArmorGuardrailProvider{
+			Project: "project-id", Location: "us-central1", Template: "template-id", CredentialsJSON: newModelArmorTestCredentials(t),
+		}},
+	} {
+		t.Run(string(provider.Type), func(t *testing.T) {
+			evaluator, err := NewEvaluator(t.Context(), provider)
+			require.NoError(t, err)
+			require.NotNil(t, evaluator)
+		})
+	}
+
+	_, err := NewEvaluator(t.Context(), &filterapi.GuardrailProvider{Type: "Unknown"})
+	require.ErrorContains(t, err, `unsupported external guardrail provider "Unknown"`)
+}
+
+func TestTimeoutSecondsDefault(t *testing.T) {
+	require.Equal(t, defaultTimeoutSeconds, timeoutSeconds(0))
+	require.Equal(t, int32(5), timeoutSeconds(5))
+}
+
+func TestDoJSONErrors(t *testing.T) {
+	err := doJSON(t.Context(), http.DefaultClient, http.MethodPost, "https://example.com", make(chan int), nil, nil)
+	require.ErrorContains(t, err, "unsupported type")
+
+	err = doJSON(t.Context(), http.DefaultClient, http.MethodPost, "http://[::1", struct{}{}, nil, nil)
+	require.ErrorContains(t, err, "missing ']' in host")
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.Close()
+	err = doJSON(t.Context(), http.DefaultClient, http.MethodPost, server.URL, struct{}{}, nil, nil)
+	require.ErrorContains(t, err, "connection refused")
+
+	malformed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	t.Cleanup(malformed.Close)
+	var response struct{}
+	err = doJSON(t.Context(), malformed.Client(), http.MethodPost, malformed.URL, struct{}{}, nil, &response)
+	require.ErrorContains(t, err, "cannot decode provider response")
+}
+
+func TestPresidioEvaluatorConfigurationAndNoFindings(t *testing.T) {
+	_, err := newPresidioEvaluator(&filterapi.PresidioGuardrailProvider{}, "", http.DefaultClient)
+	require.ErrorContains(t, err, "presidio endpoint is required")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(server.Close)
+	evaluator, err := newPresidioEvaluator(&filterapi.PresidioGuardrailProvider{Endpoint: server.URL}, "", server.Client())
+	require.NoError(t, err)
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte("nothing sensitive"), filterapi.GuardrailPhaseRequest)
+	require.NoError(t, err)
+	require.False(t, evaluation.Matched)
+}
+
+func TestAzureContentSafetyEvaluatorConfiguration(t *testing.T) {
+	_, err := newAzureContentSafetyEvaluator(&filterapi.AzureContentSafetyGuardrailProvider{APIKey: "key"}, http.DefaultClient)
+	require.ErrorContains(t, err, "azure Content Safety endpoint is required")
+	_, err = newAzureContentSafetyEvaluator(&filterapi.AzureContentSafetyGuardrailProvider{Endpoint: "https://content-safety.example.com"}, http.DefaultClient)
+	require.ErrorContains(t, err, "azure Content Safety API key is required")
+
+	evaluator, err := newAzureContentSafetyEvaluator(&filterapi.AzureContentSafetyGuardrailProvider{
+		Endpoint: "https://content-safety.example.com", APIKey: "key",
+	}, http.DefaultClient)
+	require.NoError(t, err)
+	require.Equal(t, int32(4), *evaluator.(*azureContentSafetyEvaluator).config.SeverityThreshold)
+}
+
+func TestAzureContentSafetyEvaluatorBelowThresholdAndError(t *testing.T) {
+	status := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"categoriesAnalysis":[{"category":"Violence","severity":2}]}`))
+	}))
+	t.Cleanup(server.Close)
+	evaluator, err := newAzureContentSafetyEvaluator(&filterapi.AzureContentSafetyGuardrailProvider{
+		Endpoint: server.URL, APIKey: "key",
+	}, server.Client())
+	require.NoError(t, err)
+
+	evaluation, err := evaluator.Evaluate(t.Context(), []byte("mild"), filterapi.GuardrailPhaseRequest)
+	require.NoError(t, err)
+	require.False(t, evaluation.Matched)
+
+	status = http.StatusTooManyRequests
+	_, err = evaluator.Evaluate(t.Context(), []byte("mild"), filterapi.GuardrailPhaseRequest)
+	require.ErrorContains(t, err, "azure Content Safety analyze request failed: provider returned HTTP 429")
+}
+
+func TestBedrockEvaluatorConfiguration(t *testing.T) {
+	isolateAWSEnvironment(t)
+	_, err := newBedrockEvaluator(t.Context(), &filterapi.BedrockGuardrailProvider{Region: "us-east-1"}, http.DefaultClient)
+	require.ErrorContains(t, err, "bedrock region, guardrailIdentifier, and guardrailVersion are required")
+
+	_, err = newBedrockEvaluator(t.Context(), &filterapi.BedrockGuardrailProvider{
+		Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+		CredentialFileLiteral: "[other]\naws_access_key_id = AKIDEXAMPLE\naws_secret_access_key = secret\n",
+	}, http.DefaultClient)
+	require.ErrorContains(t, err, "cannot load AWS credentials")
+
+	t.Setenv("AWS_PROFILE", "missing")
+	_, err = newBedrockEvaluator(t.Context(), &filterapi.BedrockGuardrailProvider{
+		Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+	}, http.DefaultClient)
+	require.ErrorContains(t, err, "cannot load AWS config")
+}
+
+func TestBedrockEvaluatorErrors(t *testing.T) {
+	isolateAWSEnvironment(t)
+	// Without a credentials Secret, the default chain is used and only fails when credentials are retrieved.
+	evaluator, err := newBedrockEvaluator(t.Context(), &filterapi.BedrockGuardrailProvider{
+		Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+	}, http.DefaultClient)
+	require.NoError(t, err)
+	require.Equal(t, "https://bedrock-runtime.us-east-1.amazonaws.com", evaluator.(*bedrockEvaluator).config.Endpoint)
+	_, err = evaluator.Evaluate(t.Context(), []byte("payload"), filterapi.GuardrailPhaseRequest)
+	require.ErrorContains(t, err, "cannot retrieve AWS credentials")
+
+	credentials := "[default]\naws_access_key_id = AKIDEXAMPLE\naws_secret_access_key = secret\n"
+	evaluator, err = newBedrockEvaluator(t.Context(), &filterapi.BedrockGuardrailProvider{
+		Endpoint: "http://[::1", Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+		CredentialFileLiteral: credentials,
+	}, http.DefaultClient)
+	require.NoError(t, err)
+	_, err = evaluator.Evaluate(t.Context(), []byte("payload"), filterapi.GuardrailPhaseRequest)
+	require.ErrorContains(t, err, "missing ']' in host")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "throttled", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+	evaluator, err = newBedrockEvaluator(t.Context(), &filterapi.BedrockGuardrailProvider{
+		Endpoint: server.URL, Region: "us-east-1", GuardrailIdentifier: "guardrail-id", GuardrailVersion: "1",
+		CredentialFileLiteral: credentials,
+	}, server.Client())
+	require.NoError(t, err)
+	_, err = evaluator.Evaluate(t.Context(), []byte("payload"), filterapi.GuardrailPhaseRequest)
+	require.ErrorContains(t, err, "bedrock ApplyGuardrail request failed: provider returned HTTP 429")
+}
+
+func TestModelArmorEvaluatorDefaults(t *testing.T) {
+	credentialsPath := filepath.Join(t.TempDir(), "credentials.json")
+	require.NoError(t, os.WriteFile(credentialsPath, []byte(newModelArmorTestCredentials(t)), 0o600))
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credentialsPath)
+
+	evaluator, err := newModelArmorEvaluator(t.Context(), &filterapi.ModelArmorGuardrailProvider{
+		Project: "project-id", Location: "europe-west4", Template: "template-id",
+	}, http.DefaultClient)
+	require.NoError(t, err)
+	require.Equal(t, "https://modelarmor.europe-west4.rep.googleapis.com/v1/projects/project-id/locations/europe-west4/templates/template-id",
+		evaluator.(*modelArmorEvaluator).templateURL)
+
+	t.Setenv(gcpauth.ProxyEnvVar, "://invalid")
+	_, err = newModelArmorEvaluator(t.Context(), &filterapi.ModelArmorGuardrailProvider{
+		Project: "project-id", Location: "europe-west4", Template: "template-id",
+	}, http.DefaultClient)
+	require.ErrorContains(t, err, "invalid "+gcpauth.ProxyEnvVar)
+}
+
+func TestModelArmorEvaluatorRequestErrors(t *testing.T) {
+	tokenStatus := http.StatusOK
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(tokenStatus)
+		_, _ = w.Write([]byte(`{"access_token":"gcp-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(tokenServer.Close)
+	var credentials map[string]string
+	require.NoError(t, json.Unmarshal([]byte(newModelArmorTestCredentials(t)), &credentials))
+	credentials["token_uri"] = tokenServer.URL
+	credentialsJSON, err := json.Marshal(credentials)
+	require.NoError(t, err)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	newEvaluator := func() filterapi.GuardrailEvaluator {
+		evaluator, newErr := newModelArmorEvaluator(t.Context(), &filterapi.ModelArmorGuardrailProvider{
+			Endpoint: server.URL, Project: "project-id", Location: "us-central1", Template: "template-id",
+			CredentialsJSON: string(credentialsJSON),
+		}, server.Client())
+		require.NoError(t, newErr)
+		return evaluator
+	}
+
+	_, err = newEvaluator().Evaluate(t.Context(), []byte("hello"), filterapi.GuardrailPhaseResponse)
+	require.ErrorContains(t, err, "model Armor sanitizeModelResponse request failed: provider returned HTTP 503")
+
+	tokenStatus = http.StatusUnauthorized
+	_, err = newEvaluator().Evaluate(t.Context(), []byte("hello"), filterapi.GuardrailPhaseRequest)
+	require.ErrorContains(t, err, "cannot retrieve GCP access token")
+}
+
+func TestModelArmorDeidentifiedTextWithSDPInspectMatch(t *testing.T) {
+	var results map[string]modelArmorFilterResult
+	require.NoError(t, json.Unmarshal([]byte(`{"sdp":{"sdpFilterResult":{"inspectResult":{"matchState":"MATCH_FOUND"}}}}`), &results))
+	require.Nil(t, modelArmorDeidentifiedText(results))
 }
