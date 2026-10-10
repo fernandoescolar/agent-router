@@ -787,7 +787,11 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 	if len(newBody) > 0 {
 		guardrailBody = newBody
 	}
-	outcome, guardrailErr := evaluateResponseGuardrails(ctx, u.parent.config.Guardrails, guardrailBody, u.backendName)
+	var configuredGuardrails []filterapi.RuntimeGuardrail
+	if u.parent.config != nil {
+		configuredGuardrails = u.parent.config.Guardrails
+	}
+	outcome, guardrailErr := evaluateResponseGuardrails(ctx, configuredGuardrails, guardrailBody, u.backendName)
 	if guardrailErr != nil {
 		u.parent.recordGuardrailEvaluation(ctx, filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError, u.backendName, true)
 		u.parent.recordGuardrailTrace("", filterapi.GuardrailPhaseResponse, metrics.GuardrailResultError)
