@@ -703,6 +703,7 @@ QuotaPolicyList contains a list of QuotaPolicy
 - [MCPRouteSpec](#github-com-envoyproxy-ai-gateway-api-v1alpha1-mcproutespec)
 - [MCPRouteStatus](#github-com-envoyproxy-ai-gateway-api-v1alpha1-mcproutestatus)
 - [MCPToolFilter](#github-com-envoyproxy-ai-gateway-api-v1alpha1-mcptoolfilter)
+- [ModelArmorGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-modelarmorguardrailprovider)
 - [PerModelQuota](#github-com-envoyproxy-ai-gateway-api-v1alpha1-permodelquota)
 - [PresidioGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-presidioguardrailprovider)
 - [ProtectedResourceMetadata](#github-com-envoyproxy-ai-gateway-api-v1alpha1-protectedresourcemetadata)
@@ -1958,6 +1959,11 @@ GuardrailProvider describes the implementation used to evaluate a rule.
   required="false"
   description="HTTP configures a custom guardrail service that implements the generic guardrail HTTP contract."
 /><ApiField
+  name="modelArmor"
+  type="[ModelArmorGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-modelarmorguardrailprovider)"
+  required="false"
+  description="ModelArmor configures Google Cloud Model Armor."
+/><ApiField
   name="timeoutSeconds"
   type="integer"
   required="false"
@@ -2007,6 +2013,11 @@ GuardrailProviderType is the guardrail implementation.
   description=""
 /><ApiField
   name="HTTP"
+  type="enum"
+  required="false"
+  description=""
+/><ApiField
+  name="ModelArmor"
   type="enum"
   required="false"
   description=""
@@ -2827,6 +2838,52 @@ a tool must match an include rule AND not match any exclude rule to be allowed.
   type="string array"
   required="false"
   description="ExcludeRegex is a list of RE2-compatible regular expressions that, when matched, exclude the tool.<br />Tools matching these patterns will not be available. Exclude rules take precedence over include rules."
+/>
+
+
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1alpha1-modelarmorguardrailprovider">ModelArmorGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1alpha1-guardrailprovider)
+
+ModelArmorGuardrailProvider configures calls to the Google Cloud Model Armor sanitize APIs.
+
+Request rules call sanitizeUserPrompt and Response rules call sanitizeModelResponse on the
+configured template. The filters (Responsible AI, prompt injection and jailbreak, malicious URLs,
+and Sensitive Data Protection) and their confidence levels are configured in the template.
+Mask requires a template with an advanced Sensitive Data Protection de-identify template.
+
+##### Fields
+
+
+
+<ApiField
+  name="project"
+  type="string"
+  required="true"
+  description="Project is the Google Cloud project ID that owns the Model Armor template."
+/><ApiField
+  name="location"
+  type="string"
+  required="true"
+  description="Location is the Google Cloud region of the Model Armor template, for example us-central1."
+/><ApiField
+  name="template"
+  type="string"
+  required="true"
+  description="Template is the Model Armor template ID."
+/><ApiField
+  name="endpoint"
+  type="string"
+  required="false"
+  description="Endpoint overrides the regional Model Armor endpoint, primarily for private endpoints and testing."
+/><ApiField
+  name="credentialsSecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="false"
+  description="CredentialsSecretRef optionally references a Secret whose credentials entry contains a Google Cloud<br />service account key JSON. When omitted, Application Default Credentials are used."
 />
 
 
@@ -3818,6 +3875,7 @@ MCPRouteList contains a list of MCPRoute.
 - [MCPRouteSpec](#github-com-envoyproxy-ai-gateway-api-v1beta1-mcproutespec)
 - [MCPRouteStatus](#github-com-envoyproxy-ai-gateway-api-v1beta1-mcproutestatus)
 - [MCPToolFilter](#github-com-envoyproxy-ai-gateway-api-v1beta1-mcptoolfilter)
+- [ModelArmorGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-modelarmorguardrailprovider)
 - [PresidioGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-presidioguardrailprovider)
 - [ProtectedResourceMetadata](#github-com-envoyproxy-ai-gateway-api-v1beta1-protectedresourcemetadata)
 - [ToolCall](#github-com-envoyproxy-ai-gateway-api-v1beta1-toolcall)
@@ -5173,6 +5231,11 @@ GuardrailProvider describes the implementation used to evaluate a rule.
   required="false"
   description="HTTP configures a custom guardrail service that implements the generic guardrail HTTP contract."
 /><ApiField
+  name="modelArmor"
+  type="[ModelArmorGuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-modelarmorguardrailprovider)"
+  required="false"
+  description="ModelArmor configures Google Cloud Model Armor."
+/><ApiField
   name="timeoutSeconds"
   type="integer"
   required="false"
@@ -5222,6 +5285,11 @@ GuardrailProviderType is the guardrail implementation.
   description=""
 /><ApiField
   name="HTTP"
+  type="enum"
+  required="false"
+  description=""
+/><ApiField
+  name="ModelArmor"
   type="enum"
   required="false"
   description=""
@@ -6222,6 +6290,52 @@ a tool must match an include rule AND not match any exclude rule to be allowed.
   type="string array"
   required="false"
   description="ExcludeRegex is a list of RE2-compatible regular expressions that, when matched, exclude the tool.<br />Tools matching these patterns will not be available. Exclude rules take precedence over include rules."
+/>
+
+
+#### <a id="github-com-envoyproxy-ai-gateway-api-v1beta1-modelarmorguardrailprovider">ModelArmorGuardrailProvider</a>
+
+
+
+**Appears in:**
+- [GuardrailProvider](#github-com-envoyproxy-ai-gateway-api-v1beta1-guardrailprovider)
+
+ModelArmorGuardrailProvider configures calls to the Google Cloud Model Armor sanitize APIs.
+
+Request rules call sanitizeUserPrompt and Response rules call sanitizeModelResponse on the
+configured template. The filters (Responsible AI, prompt injection and jailbreak, malicious URLs,
+and Sensitive Data Protection) and their confidence levels are configured in the template.
+Mask requires a template with an advanced Sensitive Data Protection de-identify template.
+
+##### Fields
+
+
+
+<ApiField
+  name="project"
+  type="string"
+  required="true"
+  description="Project is the Google Cloud project ID that owns the Model Armor template."
+/><ApiField
+  name="location"
+  type="string"
+  required="true"
+  description="Location is the Google Cloud region of the Model Armor template, for example us-central1."
+/><ApiField
+  name="template"
+  type="string"
+  required="true"
+  description="Template is the Model Armor template ID."
+/><ApiField
+  name="endpoint"
+  type="string"
+  required="false"
+  description="Endpoint overrides the regional Model Armor endpoint, primarily for private endpoints and testing."
+/><ApiField
+  name="credentialsSecretRef"
+  type="[SecretObjectReference](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1.SecretObjectReference)"
+  required="false"
+  description="CredentialsSecretRef optionally references a Secret whose credentials entry contains a Google Cloud<br />service account key JSON. When omitted, Application Default Credentials are used."
 />
 
 

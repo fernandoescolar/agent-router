@@ -820,6 +820,24 @@ func (c *GatewayController) guardrailProviderToFilterAPI(ctx context.Context, na
 			}
 			converted.HTTP.APIKey = apiKey
 		}
+	case aigv1b1.GuardrailProviderTypeModelArmor:
+		if provider.ModelArmor == nil {
+			return converted, fmt.Errorf("model Armor configuration is required")
+		}
+		config := provider.ModelArmor
+		converted.ModelArmor = &filterapi.ModelArmorGuardrailProvider{
+			Endpoint: config.Endpoint,
+			Project:  config.Project,
+			Location: config.Location,
+			Template: config.Template,
+		}
+		if config.CredentialsSecretRef != nil {
+			credentials, err := c.getGuardrailSecretData(ctx, namespace, config.CredentialsSecretRef, "credentials")
+			if err != nil {
+				return converted, err
+			}
+			converted.ModelArmor.CredentialsJSON = credentials
+		}
 	default:
 		return converted, fmt.Errorf("unsupported provider type %q", provider.Type)
 	}

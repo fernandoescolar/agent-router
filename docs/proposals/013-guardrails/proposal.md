@@ -27,6 +27,7 @@
     - [Presidio](#presidio)
     - [AWS Bedrock Guardrails](#aws-bedrock-guardrails)
     - [Azure AI Content Safety](#azure-ai-content-safety)
+    - [Google Cloud Model Armor](#google-cloud-model-armor)
     - [Custom HTTP Guardrails](#custom-http-guardrails)
   - [Payload Extraction](#payload-extraction)
   - [Credentials and Security](#credentials-and-security)
@@ -46,7 +47,7 @@
 
 ## Summary
 
-This proposal introduces `GuardrailPolicy`, a backend-attached policy for evaluating LLM request and response content before it is sent to an AI provider or returned to a client. The policy provides a common API for local regular-expression checks and external safety providers, initially Presidio, AWS Bedrock Guardrails, and Azure AI Content Safety. A generic HTTP provider defines a small, normalized contract that any custom guardrail service can implement, so providers without a native integration can be used without code changes to the gateway.
+This proposal introduces `GuardrailPolicy`, a backend-attached policy for evaluating LLM request and response content before it is sent to an AI provider or returned to a client. The policy provides a common API for local regular-expression checks and external safety providers, initially Presidio, AWS Bedrock Guardrails, Azure AI Content Safety, and Google Cloud Model Armor. A generic HTTP provider defines a small, normalized contract that any custom guardrail service can implement, so providers without a native integration can be used without code changes to the gateway.
 
 The proposed implementation uses the existing Agent Router external processor. The controller resolves policies and credentials into the filter configuration, while ext-proc buffers the relevant body, extracts content, invokes the configured evaluator, and applies the selected action.
 
@@ -72,7 +73,7 @@ A native policy should allow platform administrators to:
 - Scope policies to `AIServiceBackend` resources and preserve route/backend isolation.
 - Support request and response evaluation.
 - Provide a provider-neutral runtime evaluator interface.
-- Initially support Regex, Presidio, AWS Bedrock Guardrails, and Azure AI Content Safety.
+- Initially support Regex, Presidio, AWS Bedrock Guardrails, Azure AI Content Safety, and Google Cloud Model Armor.
 - Define a portable HTTP contract for custom guardrail services that are not natively supported.
 - Support explicit timeout and fail-open/fail-closed behavior.
 - Prevent partial delivery of blocked streaming responses.
@@ -250,6 +251,7 @@ The provider is a tagged union. Admission validation requires exactly the config
 - `Bedrock` requires `bedrock`.
 - `AzureContentSafety` requires `azureContentSafety`.
 - `HTTP` requires `http`.
+- `ModelArmor` requires `modelArmor`.
 
 Provider-specific configuration remains nested so new provider capabilities can be added without adding unrelated fields to every rule.
 
@@ -268,6 +270,7 @@ Mask behavior depends on provider capability:
 - Bedrock uses transformed text returned by ApplyGuardrail.
 - Azure Text Analysis does not return transformed content, so admission rejects `Mask` for Azure rules.
 - HTTP uses the `replacement` text returned by the service, or replaces returned finding spans with `maskReplacement`.
+- Model Armor uses the text de-identified by its Sensitive Data Protection filter, only when no other filter matched.
 
 Mask is applied only to extracted text fields and never replaces unrelated model or configuration fields. Masked streaming responses remain buffered until the complete body has been evaluated and rewritten.
 
@@ -319,6 +322,17 @@ The Built on Envoy implementation highlights that Azure has multiple distinct sa
 - response Protected Material Detection.
 
 A future shape could add `azureContentSafety.check` and check-specific configuration. Per-category thresholds should also replace a single threshold when Text Analysis is selected. Until then, the implementation should be documented as Text Analysis over the configured evaluation input, not as complete Azure Content Safety feature parity.
+
+### Google Cloud Model Armor
+
+[Google Cloud Model Armor] screens content against a Model Armor template. Request rules call `sanitizeUserPrompt` and response rules call `sanitizeModelResponse` on the regional endpoint; the global endpoint does not serve these methods. The rule references the template by project, location, and template ID, so filter selection and confidence levels (Responsible AI, prompt injection and jailbreak, malicious URLs, Sensitive Data Protection) stay in Google Cloud, as with Bedrock guardrail versions.
+
+A rule matches when the sanitization result reports `MATCH_FOUND`. An invocation result of `FAILURE` is a provider error and follows the rule's failure mode. Authentication uses an OAuth2 access token from either:
+
+- Google Application Default Credentials, including GKE Workload Identity; or
+- a service account key JSON read from a Kubernetes Secret.
+
+Mask requires a template with advanced Sensitive Data Protection and a de-identify template. The evaluator forwards the de-identified text only when Sensitive Data Protection is the sole matching filter; any other match (for example, a jailbreak) returns no replacement so Mask rules fail instead of forwarding flagged content. Model Armor file scanning and streaming sanitization are not used, because the gateway evaluates extracted text fields.
 
 ### Custom HTTP Guardrails
 
@@ -495,7 +509,7 @@ Running a user-supplied binary or script inside the ext-proc for each evaluation
 1. Introduce the dual-version `GuardrailPolicy`, generated clients, CRD, and status.
 2. Add target and Secret indexes, reconciliation, deletion propagation, and filter-config translation.
 3. Add runtime compilation and backend-scoped request/response evaluation.
-4. Add Regex, Presidio, Bedrock, and Azure Text Analysis evaluators.
+4. Add Regex, Presidio, Bedrock, Azure Text Analysis, and Model Armor evaluators.
 5. Add failure modes, timeouts, logs, metrics, traces, and guarded-response buffering.
 6. Add CRD admission, controller, HTTP-stub, Testcontainers, live-provider, and dataplane tests.
 7. Add semantic payload extraction and schema-aware Mask mutation.
@@ -515,7 +529,7 @@ Steps 1 through 10 describe the current implementation. Steps 11 and 12 are prop
 - HTTP-stub tests for provider paths, payloads, headers, authentication, responses, malformed responses, and errors.
 - HTTP-stub tests for the custom HTTP contract: stages, paths, bearer authentication, each action, replacement and finding masking, and invalid responses.
 - Testcontainers integration with the pinned official Presidio analyzer image.
-- Credential-gated live tests for Azure AI Content Safety and AWS Bedrock Guardrails.
+- Credential-gated live tests for Azure AI Content Safety, AWS Bedrock Guardrails, and Google Cloud Model Armor.
 - Envoy dataplane tests for request blocking, response blocking, allowed traffic, and streaming mode behavior.
 - Staging tests for policy creation, update, Secret rotation, deletion, and multi-policy attachment.
 - Load tests for provider latency, concurrency, and buffered response limits.
@@ -541,4 +555,5 @@ These gaps do not require changing the core policy-to-runtime architecture, but 
 [Built on Envoy repository]: https://github.com/tetratelabs/built-on-envoy
 [AWS Bedrock ApplyGuardrail]: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ApplyGuardrail.html
 [Azure AI Content Safety]: https://learn.microsoft.com/azure/ai-services/content-safety/
+[Google Cloud Model Armor]: https://docs.cloud.google.com/model-armor/overview
 [Presidio]: https://presidio.dataprivacystack.org/

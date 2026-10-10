@@ -177,6 +177,8 @@ func TestGuardrailPolicies(t *testing.T) {
 		{name: "azure_mask.yaml", expErr: "AzureContentSafety does not support Mask"},
 		{name: "http_mismatch.yaml", expErr: "HTTP requires only http provider configuration"},
 		{name: "http_invalid_path.yaml", expErr: "should match '^/.*$'"},
+		{name: "model_armor_mismatch.yaml", expErr: "ModelArmor requires only modelArmor provider configuration"},
+		{name: "model_armor_missing_template.yaml", expErr: "should be at least 1 chars long"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := testdata.ReadFile(path.Join("testdata/guardrailpolicies", tc.name))

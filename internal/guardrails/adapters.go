@@ -34,6 +34,8 @@ func NewEvaluator(ctx context.Context, provider *filterapi.GuardrailProvider) (f
 		return newAzureContentSafetyEvaluator(provider.AzureContentSafety, client)
 	case filterapi.GuardrailProviderTypeHTTP:
 		return newHTTPEvaluator(provider.HTTP, provider.MaskReplacement, client)
+	case filterapi.GuardrailProviderTypeModelArmor:
+		return newModelArmorEvaluator(ctx, provider.ModelArmor, client)
 	default:
 		return nil, fmt.Errorf("unsupported external guardrail provider %q", provider.Type)
 	}

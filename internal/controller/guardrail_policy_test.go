@@ -437,3 +437,89 @@ func TestGuardrailPolicySecretRefsIndexIncludesHTTPProvider(t *testing.T) {
 	}
 	require.Equal(t, []string{"custom-guardrail-key.default"}, guardrailPolicySecretRefsIndexFunc(policy))
 }
+
+func TestGuardrailModelArmorProviderToFilterAPI(t *testing.T) {
+	kube := fakekube.NewClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "model-armor-sa", Namespace: "default"},
+		Data:       map[string][]byte{"credentials": []byte(`{"type":"service_account"}`)},
+	})
+	controller := &GatewayController{kube: kube}
+	converted, err := controller.guardrailProviderToFilterAPI(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type:   aigv1b1.GuardrailProviderTypeModelArmor,
+		Action: aigv1b1.GuardrailActionMask,
+		ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{
+			Project:              "project-id",
+			Location:             "us-central1",
+			Template:             "template-id",
+			Endpoint:             "https://modelarmor.example.com",
+			CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "model-armor-sa"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, filterapi.GuardrailActionMask, converted.Action)
+	require.Equal(t, &filterapi.ModelArmorGuardrailProvider{
+		Endpoint:        "https://modelarmor.example.com",
+		Project:         "project-id",
+		Location:        "us-central1",
+		Template:        "template-id",
+		CredentialsJSON: `{"type":"service_account"}`,
+	}, converted.ModelArmor)
+
+	_, err = controller.guardrailProviderToFilterAPI(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeModelArmor,
+	})
+	require.ErrorContains(t, err, "model Armor configuration is required")
+}
+
+func TestGuardrailModelArmorProviderValidation(t *testing.T) {
+	kube := fakekube.NewClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "model-armor-sa", Namespace: "default"},
+		Data:       map[string][]byte{"credentials": []byte(`{"type":"service_account"}`)},
+	})
+	controller := &GuardrailPolicyController{kube: kube}
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeModelArmor,
+	}), "model Armor project, location, and template are required")
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type:       aigv1b1.GuardrailProviderTypeModelArmor,
+		ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{Project: "project-id", Location: "us-central1"},
+	}), "model Armor project, location, and template are required")
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeModelArmor,
+		ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{
+			Project: "project-id", Location: "us-central1", Template: "template-id", Endpoint: "not-a-url",
+		},
+	}), "valid provider endpoint is required")
+	require.ErrorContains(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type: aigv1b1.GuardrailProviderTypeModelArmor,
+		ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{
+			Project: "project-id", Location: "us-central1", Template: "template-id",
+			CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "missing"},
+		},
+	}), "failed to get secret missing")
+	require.NoError(t, controller.validateGuardrailProvider(t.Context(), "default", &aigv1b1.GuardrailProvider{
+		Type:   aigv1b1.GuardrailProviderTypeModelArmor,
+		Action: aigv1b1.GuardrailActionMask,
+		ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{
+			Project: "project-id", Location: "us-central1", Template: "template-id",
+			CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "model-armor-sa"},
+		},
+	}))
+}
+
+func TestGuardrailPolicySecretRefsIndexIncludesModelArmorProvider(t *testing.T) {
+	policy := &aigv1b1.GuardrailPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "model-armor", Namespace: "default"},
+		Spec: aigv1b1.GuardrailPolicySpec{Rules: []aigv1b1.GuardrailRule{{
+			Name: "model-armor", Phase: aigv1b1.GuardrailPhaseRequest,
+			Provider: aigv1b1.GuardrailProvider{
+				Type: aigv1b1.GuardrailProviderTypeModelArmor,
+				ModelArmor: &aigv1b1.ModelArmorGuardrailProvider{
+					Project: "project-id", Location: "us-central1", Template: "template-id",
+					CredentialsSecretRef: &gwapiv1.SecretObjectReference{Name: "model-armor-sa"},
+				},
+			},
+		}}},
+	}
+	require.Equal(t, []string{"model-armor-sa.default"}, guardrailPolicySecretRefsIndexFunc(policy))
+}

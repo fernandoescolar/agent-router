@@ -21,6 +21,7 @@ The expected Secret keys are:
 - Azure Content Safety: required `apiKey`
 - AWS Bedrock Guardrails: optional `credentials` containing an AWS shared credentials file; when omitted, the ext-proc uses the standard AWS credential chain.
 - Custom HTTP guardrail: optional `apiKey`, sent as a bearer token.
+- Google Cloud Model Armor: optional `credentials` containing a service account key JSON; when omitted, the ext-proc uses Google Application Default Credentials, such as GKE Workload Identity.
 
 The `HTTP` provider calls any service that implements the generic guardrail contract: the gateway sends `{"text": "...", "context": {"stage": "input"}}` to `POST /analyze` and expects `{"action": "allow" | "block" | "modify", "findings": [...], "replacement": "..."}`. See the [guardrails documentation](../../site/docs/capabilities/security/guardrails.md#custom-http-guardrails) for the full contract.
 

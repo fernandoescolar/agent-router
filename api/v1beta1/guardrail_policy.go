@@ -81,16 +81,17 @@ const (
 )
 
 // GuardrailProvider describes the implementation used to evaluate a rule.
-// +kubebuilder:validation:XValidation:rule="self.type != 'Regex' || (has(self.pattern) && size(self.pattern) > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http))",message="Regex requires pattern and no external provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http))",message="Presidio requires only presidio provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock) && !has(self.presidio) && !has(self.azureContentSafety) && !has(self.http))",message="Bedrock requires only bedrock provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'AzureContentSafety' || (!has(self.pattern) && has(self.azureContentSafety) && !has(self.presidio) && !has(self.bedrock) && !has(self.http))",message="AzureContentSafety requires only azureContentSafety provider configuration"
-// +kubebuilder:validation:XValidation:rule="self.type != 'HTTP' || (!has(self.pattern) && has(self.http) && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety))",message="HTTP requires only http provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Regex' || (has(self.pattern) && size(self.pattern) > 0 && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http) && !has(self.modelArmor))",message="Regex requires pattern and no external provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Presidio' || (!has(self.pattern) && has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http) && !has(self.modelArmor))",message="Presidio requires only presidio provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Bedrock' || (!has(self.pattern) && has(self.bedrock) && !has(self.presidio) && !has(self.azureContentSafety) && !has(self.http) && !has(self.modelArmor))",message="Bedrock requires only bedrock provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'AzureContentSafety' || (!has(self.pattern) && has(self.azureContentSafety) && !has(self.presidio) && !has(self.bedrock) && !has(self.http) && !has(self.modelArmor))",message="AzureContentSafety requires only azureContentSafety provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'HTTP' || (!has(self.pattern) && has(self.http) && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.modelArmor))",message="HTTP requires only http provider configuration"
+// +kubebuilder:validation:XValidation:rule="self.type != 'ModelArmor' || (!has(self.pattern) && has(self.modelArmor) && !has(self.presidio) && !has(self.bedrock) && !has(self.azureContentSafety) && !has(self.http))",message="ModelArmor requires only modelArmor provider configuration"
 // +kubebuilder:validation:XValidation:rule="self.action != 'Mask' || self.type != 'AzureContentSafety'",message="AzureContentSafety does not support Mask"
 type GuardrailProvider struct {
 	// Type identifies the guardrail implementation.
 	//
-	// +kubebuilder:validation:Enum=Regex;Presidio;Bedrock;AzureContentSafety;HTTP
+	// +kubebuilder:validation:Enum=Regex;Presidio;Bedrock;AzureContentSafety;HTTP;ModelArmor
 	Type GuardrailProviderType `json:"type"`
 	// Pattern is used for deterministic regex-based evaluations.
 	//
@@ -126,6 +127,10 @@ type GuardrailProvider struct {
 	//
 	// +optional
 	HTTP *HTTPGuardrailProvider `json:"http,omitempty"`
+	// ModelArmor configures Google Cloud Model Armor.
+	//
+	// +optional
+	ModelArmor *ModelArmorGuardrailProvider `json:"modelArmor,omitempty"`
 	// TimeoutSeconds limits each external provider evaluation.
 	// +optional
 	// +kubebuilder:default=10
@@ -208,6 +213,32 @@ type HTTPGuardrailProvider struct {
 	APIKeySecretRef *gwapiv1.SecretObjectReference `json:"apiKeySecretRef,omitempty"`
 }
 
+// ModelArmorGuardrailProvider configures calls to the Google Cloud Model Armor sanitize APIs.
+//
+// Request rules call sanitizeUserPrompt and Response rules call sanitizeModelResponse on the
+// configured template. The filters (Responsible AI, prompt injection and jailbreak, malicious URLs,
+// and Sensitive Data Protection) and their confidence levels are configured in the template.
+// Mask requires a template with an advanced Sensitive Data Protection de-identify template.
+type ModelArmorGuardrailProvider struct {
+	// Project is the Google Cloud project ID that owns the Model Armor template.
+	// +kubebuilder:validation:MinLength=1
+	Project string `json:"project"`
+	// Location is the Google Cloud region of the Model Armor template, for example us-central1.
+	// +kubebuilder:validation:MinLength=1
+	Location string `json:"location"`
+	// Template is the Model Armor template ID.
+	// +kubebuilder:validation:MinLength=1
+	Template string `json:"template"`
+	// Endpoint overrides the regional Model Armor endpoint, primarily for private endpoints and testing.
+	// +optional
+	// +kubebuilder:validation:Format=uri
+	Endpoint string `json:"endpoint,omitempty"`
+	// CredentialsSecretRef optionally references a Secret whose credentials entry contains a Google Cloud
+	// service account key JSON. When omitted, Application Default Credentials are used.
+	// +optional
+	CredentialsSecretRef *gwapiv1.SecretObjectReference `json:"credentialsSecretRef,omitempty"`
+}
+
 // GuardrailProviderType is the guardrail implementation.
 type GuardrailProviderType string
 
@@ -217,6 +248,7 @@ const (
 	GuardrailProviderTypeBedrockGuardrails  GuardrailProviderType = "Bedrock"
 	GuardrailProviderTypeAzureContentSafety GuardrailProviderType = "AzureContentSafety"
 	GuardrailProviderTypeHTTP               GuardrailProviderType = "HTTP"
+	GuardrailProviderTypeModelArmor         GuardrailProviderType = "ModelArmor"
 )
 
 // GuardrailAction defines the safeguard action.

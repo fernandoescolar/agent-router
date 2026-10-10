@@ -606,6 +606,10 @@ func guardrailPolicySecretRefsIndexFunc(o client.Object) []string {
 			if provider.HTTP != nil {
 				ref = provider.HTTP.APIKeySecretRef
 			}
+		case aigv1b1.GuardrailProviderTypeModelArmor:
+			if provider.ModelArmor != nil {
+				ref = provider.ModelArmor.CredentialsSecretRef
+			}
 		}
 		if ref != nil {
 			namespace := policy.Namespace
