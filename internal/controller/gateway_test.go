@@ -2404,7 +2404,7 @@ func TestGatewayController_annotateGatewayPods(t *testing.T) {
 		require.Equal(t, "some-uuid", deployment.Spec.Template.Annotations[aigatewayUUIDAnnotationKey])
 
 		// Simulate new pod created after rollout with -mcpAddr present
-		pod.Spec.InitContainers[0].Args = []string{"-logLevel", logLevel, "-mcpAddr", ":9856", "-adminPort", "1064"}
+		pod.Spec.InitContainers[0].Args = []string{"-logLevel", logLevel, "-mcpAddr", internalapi.MCPProxyAddr, "-adminPort", "1064"}
 		pod, err = kube.CoreV1().Pods(egNamespace).Update(t.Context(), pod, metav1.UpdateOptions{})
 		require.NoError(t, err)
 
@@ -2750,10 +2750,34 @@ func TestGatewayController_checkPodHasSideCar(t *testing.T) {
 	t.Run("container mode: needMCP with -mcpAddr keeps sidecar", func(t *testing.T) {
 		c := newTestGatewayController(fakeClient, kube, ctrl.Log, egNamespace, image, logLevel, false, nil, false)
 		pod := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{
-			extProcContainer("-logLevel", logLevel, "-mcpAddr", ":808"),
+			extProcContainer("-logLevel", logLevel, "-mcpAddr", internalapi.MCPProxyAddr),
 		}}}
 		hasSideCar := c.checkPodHasSideCar(pod, true, c.image)
-		require.True(t, hasSideCar, "with -mcpAddr present the sidecar is up to date")
+		require.True(t, hasSideCar, "with the desired -mcpAddr the sidecar is up to date")
+	})
+
+	// Pods created before the MCP proxy was bound to loopback listen on every interface. They must
+	// be rolled, otherwise the proxy stays reachable from other pods until something else restarts them.
+	t.Run("container mode: needMCP with all-interfaces -mcpAddr triggers rollout", func(t *testing.T) {
+		c := newTestGatewayController(fakeClient, kube, ctrl.Log, egNamespace, image, logLevel, false, nil, false)
+		pod := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{
+			extProcContainer("-logLevel", logLevel, "-mcpAddr", ":9856"),
+		}}}
+		hasSideCar := c.checkPodHasSideCar(pod, true, c.image)
+		require.False(t, hasSideCar, "a non-loopback -mcpAddr must trigger rollout")
+	})
+
+	t.Run("sidecar mode: needMCP with all-interfaces -mcpAddr triggers rollout", func(t *testing.T) {
+		c := newTestGatewayController(fakeClient, kube, ctrl.Log, egNamespace, image, logLevel, false, nil, true)
+		pod := &corev1.Pod{Spec: corev1.PodSpec{InitContainers: []corev1.Container{
+			extProcContainer("-logLevel", logLevel, "-mcpAddr", ":9856"),
+		}}}
+		hasSideCar := c.checkPodHasSideCar(pod, true, c.image)
+		require.False(t, hasSideCar, "a non-loopback -mcpAddr must trigger rollout")
+
+		pod.Spec.InitContainers[0].Args = []string{"-logLevel", logLevel, "-mcpAddr", internalapi.MCPProxyAddr}
+		hasSideCar = c.checkPodHasSideCar(pod, true, c.image)
+		require.True(t, hasSideCar, "with the desired -mcpAddr the sidecar is up to date")
 	})
 
 	t.Run("container mode: logLevel mismatch triggers rollout", func(t *testing.T) {
@@ -3612,6 +3636,13 @@ func TestGatewayController_reconcileFilterMCPConfigSecret(t *testing.T) {
 	require.Equal(t, "mcp-uuid", cfg.UUID)
 	require.NotNil(t, cfg.MCPConfig)
 	require.Equal(t, "http://127.0.0.1:"+strconv.Itoa(internalapi.MCPBackendListenerPort), cfg.MCPConfig.BackendListenerAddr)
+	// The MCP session encryption config is delivered through the filter config Secrets.
+	require.Equal(t, &filterapi.MCPSessionEncryption{
+		Seed:               "seed",
+		Iterations:         100,
+		FallbackSeed:       "fallback",
+		FallbackIterations: 200,
+	}, cfg.MCPConfig.SessionEncryption)
 }
 
 func TestGatewayController_writeFilterConfigBundleShards(t *testing.T) {
