@@ -10,9 +10,20 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/envoyproxy/ai-gateway/internal/filterapi"
 )
+
+// guardrailEvaluationBudget bounds the time all the guardrails of one phase may take together. Envoy waits 10s for
+// each ext_proc message and then answers 504 on its own, before a FailOpen guardrail gets to let the request
+// through, so the guardrails have to give up first and leave time for the rest of the processing.
+var guardrailEvaluationBudget = 8 * time.Second
+
+// maxConcurrentGuardrailEvaluations bounds the provider calls a guardrail makes at once: one per extracted text,
+// which on a long conversation is one per message.
+const maxConcurrentGuardrailEvaluations = 8
 
 // guardrailViolation describes a trigger that should block the request/response.
 type guardrailViolation struct {
@@ -62,6 +73,8 @@ func guardrailsRequireBufferedResponse(guardrails []filterapi.RuntimeGuardrail, 
 }
 
 func evaluateGuardrailsForPhase(ctx context.Context, guardrails []filterapi.RuntimeGuardrail, phase filterapi.GuardrailPhase, body []byte, backendName string, includeGlobal bool) (guardrailOutcome, error) {
+	ctx, cancel := context.WithTimeout(ctx, guardrailEvaluationBudget)
+	defer cancel()
 	outcome := guardrailOutcome{Body: body}
 	var failOpenErrors []error
 	for i := range guardrails {
@@ -107,7 +120,15 @@ func evaluateGuardrailsForPhase(ctx context.Context, guardrails []filterapi.Runt
 			}
 			return outcome, fmt.Errorf("guardrail %q text extraction failed: %w", g.Name, err)
 		}
-		for _, content := range contents {
+		var evaluations []filterapi.GuardrailEvaluationResult
+		var evaluationErrors []error
+		if g.Provider.Type != filterapi.GuardrailProviderTypeRegex {
+			if g.Evaluator == nil {
+				return outcome, fmt.Errorf("guardrail %q uses provider %q without an evaluator", g.Name, g.Provider.Type)
+			}
+			evaluations, evaluationErrors = evaluateGuardrailContents(ctx, g.Evaluator, contents, phase)
+		}
+		for j, content := range contents {
 			var evaluation filterapi.GuardrailEvaluationResult
 			if g.Provider.Type == filterapi.GuardrailProviderTypeRegex {
 				if g.Matcher == nil {
@@ -122,10 +143,7 @@ func evaluateGuardrailsForPhase(ctx context.Context, guardrails []filterapi.Runt
 					evaluation.Replacement = g.Matcher.ReplaceAll(content.text, []byte(replacement))
 				}
 			} else {
-				if g.Evaluator == nil {
-					return outcome, fmt.Errorf("guardrail %q uses provider %q without an evaluator", g.Name, g.Provider.Type)
-				}
-				evaluation, err = g.Evaluator.Evaluate(ctx, content.text, phase)
+				evaluation, err = evaluations[j], evaluationErrors[j]
 				if err != nil {
 					if g.Provider.FailureMode == filterapi.GuardrailFailureModeFailOpen || action == filterapi.GuardrailActionMonitor {
 						failOpenErrors = append(failOpenErrors, fmt.Errorf("guardrail %q evaluation failed: %w", g.Name, err))
@@ -161,6 +179,24 @@ func evaluateGuardrailsForPhase(ctx context.Context, guardrails []filterapi.Runt
 		return outcome, &guardrailFailOpenError{errors: failOpenErrors}
 	}
 	return outcome, nil
+}
+
+// evaluateGuardrailContents sends every extracted text to the provider, a few at a time, and returns the results
+// in the order of contents, so a mask or a violation applies exactly as when they were evaluated one by one.
+func evaluateGuardrailContents(ctx context.Context, evaluator filterapi.GuardrailEvaluator, contents []guardrailContent, phase filterapi.GuardrailPhase) ([]filterapi.GuardrailEvaluationResult, []error) {
+	evaluations := make([]filterapi.GuardrailEvaluationResult, len(contents))
+	errs := make([]error, len(contents))
+	slots := make(chan struct{}, maxConcurrentGuardrailEvaluations)
+	var wg sync.WaitGroup
+	for i := range contents {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			evaluations[i], errs[i] = evaluator.Evaluate(ctx, contents[i].text, phase)
+		})
+	}
+	wg.Wait()
+	return evaluations, errs
 }
 
 func guardrailAction(action filterapi.GuardrailAction) filterapi.GuardrailAction {

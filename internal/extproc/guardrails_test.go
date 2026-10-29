@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"testing"
+	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/require"
@@ -526,4 +527,85 @@ func TestReplaceGuardrailContentWholeBody(t *testing.T) {
 	replaced, err := replaceGuardrailContent([]byte("plain text"), guardrailContent{}, []byte("masked"))
 	require.NoError(t, err)
 	require.Equal(t, "masked", string(replaced))
+}
+
+// barrierGuardrailEvaluator answers only once `calls` evaluations are in flight at the same time.
+type barrierGuardrailEvaluator struct {
+	calls   int
+	arrived chan struct{}
+	release chan struct{}
+}
+
+func newBarrierGuardrailEvaluator(calls int) *barrierGuardrailEvaluator {
+	e := &barrierGuardrailEvaluator{calls: calls, arrived: make(chan struct{}, calls), release: make(chan struct{})}
+	go func() {
+		for range calls {
+			<-e.arrived
+		}
+		close(e.release)
+	}()
+	return e
+}
+
+func (e *barrierGuardrailEvaluator) Evaluate(ctx context.Context, body []byte, _ filterapi.GuardrailPhase) (filterapi.GuardrailEvaluationResult, error) {
+	e.arrived <- struct{}{}
+	select {
+	case <-e.release:
+		return filterapi.GuardrailEvaluationResult{Matched: true, Replacement: []byte("masked:" + string(body))}, nil
+	case <-ctx.Done():
+		return filterapi.GuardrailEvaluationResult{}, ctx.Err()
+	}
+}
+
+type blockingGuardrailEvaluator struct{}
+
+func (*blockingGuardrailEvaluator) Evaluate(ctx context.Context, _ []byte, _ filterapi.GuardrailPhase) (filterapi.GuardrailEvaluationResult, error) {
+	<-ctx.Done()
+	return filterapi.GuardrailEvaluationResult{}, ctx.Err()
+}
+
+func setGuardrailEvaluationBudget(t *testing.T, budget time.Duration) {
+	previous := guardrailEvaluationBudget
+	guardrailEvaluationBudget = budget
+	t.Cleanup(func() { guardrailEvaluationBudget = previous })
+}
+
+func TestGuardrailEvaluatesContentsConcurrently(t *testing.T) {
+	setGuardrailEvaluationBudget(t, 5*time.Second)
+	body := []byte(`{"messages":[{"role":"system","content":"one"},{"role":"user","content":"two"},{"role":"assistant","content":"three"}]}`)
+
+	outcome, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{{
+		Name: "mask", Phase: filterapi.GuardrailPhaseRequest,
+		Provider:  filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeModelArmor, Action: filterapi.GuardrailActionMask},
+		Evaluator: newBarrierGuardrailEvaluator(3),
+	}}, body)
+	require.NoError(t, err)
+	require.True(t, outcome.Masked)
+	require.JSONEq(t, `{"messages":[{"role":"system","content":"masked:one"},{"role":"user","content":"masked:two"},{"role":"assistant","content":"masked:three"}]}`, string(outcome.Body))
+}
+
+func TestGuardrailEvaluationBudget(t *testing.T) {
+	setGuardrailEvaluationBudget(t, 50*time.Millisecond)
+	body := []byte(`{"messages":[{"role":"user","content":"one"},{"role":"user","content":"two"}]}`)
+	guardrail := filterapi.RuntimeGuardrail{
+		Name: "slow", Phase: filterapi.GuardrailPhaseRequest,
+		Provider:  filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypeModelArmor},
+		Evaluator: &blockingGuardrailEvaluator{},
+	}
+
+	t.Run("fail open lets the request through when the budget runs out", func(t *testing.T) {
+		guardrail := guardrail
+		guardrail.Provider.FailureMode = filterapi.GuardrailFailureModeFailOpen
+		outcome, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{guardrail}, body)
+		require.Nil(t, outcome.Violation)
+		require.True(t, isGuardrailFailOpenError(err))
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+		require.Equal(t, body, outcome.Body)
+	})
+
+	t.Run("fail closed returns an error when the budget runs out", func(t *testing.T) {
+		_, err := evaluateRequestGuardrails(t.Context(), []filterapi.RuntimeGuardrail{guardrail}, body)
+		require.False(t, isGuardrailFailOpenError(err))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
 }
