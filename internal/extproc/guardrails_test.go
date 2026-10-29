@@ -6,6 +6,7 @@
 package extproc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -245,6 +246,75 @@ func TestGuardrailMonitorAndMask(t *testing.T) {
 		require.True(t, outcome.Masked)
 		require.JSONEq(t, `{"model":"safe-model","messages":[{"role":"user","content":"masked:secret"}]}`, string(outcome.Body))
 		require.NotContains(t, string(outcome.Body), "masked:safe-model")
+	})
+}
+
+type countingGuardrailEvaluator struct {
+	calls  [][]byte
+	result func(body []byte) filterapi.GuardrailEvaluationResult
+}
+
+func (e *countingGuardrailEvaluator) Evaluate(_ context.Context, body []byte, _ filterapi.GuardrailPhase) (filterapi.GuardrailEvaluationResult, error) {
+	e.calls = append(e.calls, append([]byte(nil), body...))
+	return e.result(body), nil
+}
+
+func TestExternalGuardrailSendsSingleRequest(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[` +
+		`{"role":"system","content":"be nice"},` +
+		`{"role":"user","content":[{"type":"text","text":"mail alice@example.com"},{"type":"text","text":"thanks"}]},` +
+		`{"role":"assistant","content":"ok, alice@example.com"}]}`)
+	expMasked := `{"model":"m","messages":[` +
+		`{"role":"system","content":"be nice"},` +
+		`{"role":"user","content":[{"type":"text","text":"mail [EMAIL]"},{"type":"text","text":"thanks"}]},` +
+		`{"role":"assistant","content":"ok, [EMAIL]"}]}`
+	maskEmail := func(b []byte) filterapi.GuardrailEvaluationResult {
+		if !bytes.Contains(b, []byte("alice@example.com")) {
+			return filterapi.GuardrailEvaluationResult{}
+		}
+		return filterapi.GuardrailEvaluationResult{Matched: true, Replacement: bytes.ReplaceAll(b, []byte("alice@example.com"), []byte("[EMAIL]"))}
+	}
+	guardrail := func(action filterapi.GuardrailAction, evaluator filterapi.GuardrailEvaluator) []filterapi.RuntimeGuardrail {
+		return []filterapi.RuntimeGuardrail{{
+			Name: "presidio", Phase: filterapi.GuardrailPhaseRequest,
+			Provider:  filterapi.GuardrailProvider{Type: filterapi.GuardrailProviderTypePresidio, Action: action},
+			Evaluator: evaluator,
+		}}
+	}
+
+	t.Run("block", func(t *testing.T) {
+		evaluator := &countingGuardrailEvaluator{result: maskEmail}
+		outcome, err := evaluateRequestGuardrails(t.Context(), guardrail(filterapi.GuardrailActionBlock, evaluator), body)
+		require.NoError(t, err)
+		require.NotNil(t, outcome.Violation)
+		require.Len(t, evaluator.calls, 1)
+		for _, text := range []string{"be nice", "mail alice@example.com", "thanks", "ok, alice@example.com"} {
+			require.Contains(t, string(evaluator.calls[0]), text)
+		}
+	})
+
+	t.Run("mask maps replacement back to fields", func(t *testing.T) {
+		evaluator := &countingGuardrailEvaluator{result: maskEmail}
+		outcome, err := evaluateRequestGuardrails(t.Context(), guardrail(filterapi.GuardrailActionMask, evaluator), body)
+		require.NoError(t, err)
+		require.True(t, outcome.Masked)
+		require.Len(t, evaluator.calls, 1)
+		require.JSONEq(t, expMasked, string(outcome.Body))
+	})
+
+	t.Run("mask falls back per field when separators are lost", func(t *testing.T) {
+		evaluator := &countingGuardrailEvaluator{result: func(b []byte) filterapi.GuardrailEvaluationResult {
+			result := maskEmail(b)
+			if result.Matched {
+				result.Replacement = bytes.ReplaceAll(result.Replacement, []byte(guardrailContentSeparator), []byte(" "))
+			}
+			return result
+		}}
+		outcome, err := evaluateRequestGuardrails(t.Context(), guardrail(filterapi.GuardrailActionMask, evaluator), body)
+		require.NoError(t, err)
+		require.True(t, outcome.Masked)
+		require.Len(t, evaluator.calls, 5)
+		require.JSONEq(t, expMasked, string(outcome.Body))
 	})
 }
 
