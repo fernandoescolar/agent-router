@@ -89,8 +89,11 @@ type openAIToGCPVertexAITranslatorV1ChatCompletion struct {
 	// finish_reason must be derived from the whole stream, not just the current
 	// chunk. It is tracked per candidate because with n > 1 each candidate is an
 	// independent completion: a tool call in candidate 0 says nothing about how
-	// candidate 1 finished.
-	streamedToolCallByCandidate map[int]bool
+	// candidate 1 finished. The key is the candidate index reported by Gemini,
+	// not the position in the chunk's candidates slice: Gemini may stream a chunk
+	// that carries only candidate 1, in which case that candidate sits at position
+	// 0 of the slice.
+	streamedToolCallByCandidate map[int32]bool
 	// Redaction configuration for debug logging
 	debugLogEnabled bool
 	enableRedaction bool
@@ -401,14 +404,16 @@ func (o *openAIToGCPVertexAITranslatorV1ChatCompletion) geminiCandidatesToOpenAI
 	responseMode := o.responseMode
 	choices := make([]openai.ChatCompletionResponseChunkChoice, 0, len(candidates))
 
-	for i, candidate := range candidates {
+	for _, candidate := range candidates {
 		if candidate == nil {
 			continue
 		}
 
-		// Create the streaming choice.
+		// Create the streaming choice. The choice index is the candidate index
+		// reported by Gemini: a streamed chunk may carry only a subset of the
+		// candidates, so the position in the slice is not the candidate's identity.
 		choice := openai.ChatCompletionResponseChunkChoice{
-			Index: int64(i),
+			Index: int64(candidate.Index),
 		}
 
 		toolCalls := []openai.ChatCompletionChunkChoiceDeltaToolCall{}
@@ -459,9 +464,9 @@ func (o *openAIToGCPVertexAITranslatorV1ChatCompletion) geminiCandidatesToOpenAI
 		// for this candidate.
 		if len(toolCalls) > 0 {
 			if o.streamedToolCallByCandidate == nil {
-				o.streamedToolCallByCandidate = make(map[int]bool)
+				o.streamedToolCallByCandidate = make(map[int32]bool)
 			}
-			o.streamedToolCallByCandidate[i] = true
+			o.streamedToolCallByCandidate[candidate.Index] = true
 		}
 
 		choice.FinishReason = geminiFinishReasonToOpenAI(candidate.FinishReason, toolCalls)
@@ -473,7 +478,7 @@ func (o *openAIToGCPVertexAITranslatorV1ChatCompletion) geminiCandidatesToOpenAI
 		// OpenAI finish_reason for the completion is still "tool_calls". Older
 		// Gemini models carried the functionCall and STOP in the same chunk, so
 		// this only affects the newer split-chunk shape.
-		if choice.FinishReason == openai.ChatCompletionChoicesFinishReasonStop && o.streamedToolCallByCandidate[i] {
+		if choice.FinishReason == openai.ChatCompletionChoicesFinishReasonStop && o.streamedToolCallByCandidate[candidate.Index] {
 			choice.FinishReason = openai.ChatCompletionChoicesFinishReasonToolCalls
 		}
 
