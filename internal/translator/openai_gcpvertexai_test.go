@@ -1488,33 +1488,74 @@ func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_StreamingFinishReasonAfte
 // decided per candidate: a tool call streamed by candidate 0 must not turn candidate 1's plain
 // STOP into "tool_calls", which would make the client look for a call that was never emitted.
 func TestOpenAIToGCPVertexAITranslatorV1ChatCompletion_StreamingFinishReasonPerCandidate(t *testing.T) {
-	translator := &openAIToGCPVertexAITranslatorV1ChatCompletion{stream: true}
+	const (
+		cand0ToolCall = `{"index":0,"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"NYC"}}}],"role":"model"}}`
+		cand1Text     = `{"index":1,"content":{"parts":[{"text":"It is sunny."}],"role":"model"}}`
+		cand0Stop     = `{"index":0,"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP"}`
+		cand1Stop     = `{"index":1,"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP"}`
+	)
 
-	// First chunk: candidate 0 calls a tool, candidate 1 answers with text.
-	firstChunk := `{"candidates":[` +
-		`{"index":0,"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"NYC"}}}],"role":"model"}},` +
-		`{"index":1,"content":{"parts":[{"text":"It is sunny."}],"role":"model"}}` +
-		`]}`
-	_, firstBody, _, _, err := translator.handleStreamingResponse(bytes.NewReader([]byte(firstChunk)), false, nil)
-	require.NoError(t, err)
-	for _, choice := range streamedChoicesByIndex(t, firstBody) {
-		require.Empty(t, choice.FinishReason)
+	tests := []struct {
+		name   string
+		chunks []string
+	}{
+		{
+			// Every chunk carries both candidates in order, so the candidate index and
+			// the position in the chunk's candidates slice coincide.
+			name: "both candidates in every chunk",
+			chunks: []string{
+				`{"candidates":[` + cand0ToolCall + `,` + cand1Text + `]}`,
+				`{"candidates":[` + cand0Stop + `,` + cand1Stop + `]}`,
+			},
+		},
+		{
+			// Each chunk carries a single candidate, so candidate 1 always sits at
+			// position 0 of the slice. The state must be keyed by the candidate index
+			// reported by Gemini, otherwise candidate 1's STOP would read candidate 0's
+			// tool-call state and be emitted as tool_calls.
+			name: "one candidate per chunk",
+			chunks: []string{
+				`{"candidates":[` + cand0ToolCall + `]}`,
+				`{"candidates":[` + cand1Text + `]}`,
+				`{"candidates":[` + cand1Stop + `]}`,
+				`{"candidates":[` + cand0Stop + `]}`,
+			},
+		},
+		{
+			// Candidate 1 finishes before candidate 0 has even emitted its tool call.
+			name: "candidate 1 finishes first",
+			chunks: []string{
+				`{"candidates":[` + cand1Text + `]}`,
+				`{"candidates":[` + cand1Stop + `]}`,
+				`{"candidates":[` + cand0ToolCall + `]}`,
+				`{"candidates":[` + cand0Stop + `]}`,
+			},
+		},
 	}
 
-	// Second chunk: both candidates terminate with STOP and no functionCall part.
-	secondChunk := `{"candidates":[` +
-		`{"index":0,"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP"},` +
-		`{"index":1,"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP"}` +
-		`]}`
-	_, secondBody, _, _, err := translator.handleStreamingResponse(bytes.NewReader([]byte(secondChunk)), false, nil)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			translator := &openAIToGCPVertexAITranslatorV1ChatCompletion{stream: true}
 
-	choices := streamedChoicesByIndex(t, secondBody)
-	require.Len(t, choices, 2)
-	require.Equal(t, openai.ChatCompletionChoicesFinishReasonToolCalls, choices[0].FinishReason,
-		"candidate 0 streamed a tool call earlier, so its STOP must be reported as tool_calls")
-	require.Equal(t, openai.ChatCompletionChoicesFinishReasonStop, choices[1].FinishReason,
-		"candidate 1 never streamed a tool call, so its STOP must stay stop")
+			choices := map[int64]openai.ChatCompletionResponseChunkChoice{}
+			for _, chunk := range tt.chunks {
+				_, body, _, _, err := translator.handleStreamingResponse(bytes.NewReader([]byte(chunk)), false, nil)
+				require.NoError(t, err)
+				for idx, choice := range streamedChoicesByIndex(t, body) {
+					// Only the terminal chunk of a candidate carries a finish_reason.
+					if choice.FinishReason != "" {
+						choices[idx] = choice
+					}
+				}
+			}
+
+			require.Len(t, choices, 2, "each candidate must end exactly once, under its own index")
+			require.Equal(t, openai.ChatCompletionChoicesFinishReasonToolCalls, choices[0].FinishReason,
+				"candidate 0 streamed a tool call earlier, so its STOP must be reported as tool_calls")
+			require.Equal(t, openai.ChatCompletionChoicesFinishReasonStop, choices[1].FinishReason,
+				"candidate 1 never streamed a tool call, so its STOP must stay stop")
+		})
+	}
 }
 
 // streamedChoicesByIndex parses the SSE body produced by the streaming translator and returns the
