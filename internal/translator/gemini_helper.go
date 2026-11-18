@@ -627,10 +627,26 @@ func reasoningEffortAvailable(requestModel internalapi.RequestModel) bool {
 	return isGemini3OrNewer(requestModel)
 }
 
-// isGemini3OrNewer reports whether requestModel is a Gemini 3.x or 4.x model.
+// isGemini3OrNewer reports whether requestModel is a Gemini model with major version 3 or higher.
+// Only the numeric component immediately after "gemini-" is considered, so digits in revision
+// or date suffixes (e.g. "gemini-2.5-flash-preview-04-17") do not affect the result. A path
+// prefix such as "publishers/google/models/" is tolerated.
 func isGemini3OrNewer(requestModel internalapi.RequestModel) bool {
 	m := strings.ToLower(requestModel)
-	return strings.Contains(m, "gemini") && (strings.Contains(m, "3") || strings.Contains(m, "4"))
+	const prefix = "gemini-"
+	i := strings.LastIndex(m, prefix)
+	if i < 0 {
+		return false
+	}
+	major, digits := 0, 0
+	for _, c := range m[i+len(prefix):] {
+		if c < '0' || c > '9' {
+			break
+		}
+		major = major*10 + int(c-'0')
+		digits++
+	}
+	return digits > 0 && major >= 3
 }
 
 // isGeminiFlashModel checks if the model is a Gemini Flash model.
