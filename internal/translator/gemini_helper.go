@@ -113,11 +113,6 @@ func openAIMessagesToGeminiContents(messages []openai.ChatCompletionMessageParam
 			}
 			gcpParts = append(gcpParts, part)
 		case msgUnion.OfAssistant != nil:
-			// Flush any accumulated user/tool parts before assistant.
-			if len(gcpParts) > 0 {
-				gcpContents = append(gcpContents, genai.Content{Role: genai.RoleUser, Parts: gcpParts})
-				gcpParts = nil
-			}
 			msg := msgUnion.OfAssistant
 			assistantParts, toolCalls, err := assistantMsgToGeminiParts(msg)
 			if err != nil {
@@ -125,14 +120,23 @@ func openAIMessagesToGeminiContents(messages []openai.ChatCompletionMessageParam
 			}
 			maps.Copy(knownToolCalls, toolCalls)
 			// Skip empty assistant turns (e.g. from an interrupted or empty completion
-			// persisted in history) and coalesce consecutive model turns so Gemini's
-			// strict user/model turn alternation is preserved.
-			if len(assistantParts) > 0 {
-				if n := len(gcpContents); n > 0 && gcpContents[n-1].Role == genai.RoleModel {
-					gcpContents[n-1].Parts = mergeGeminiModelParts(gcpContents[n-1].Parts, assistantParts)
-				} else {
-					gcpContents = append(gcpContents, genai.Content{Role: genai.RoleModel, Parts: assistantParts})
-				}
+			// persisted in history). Pending user/tool parts are deliberately left in
+			// gcpParts so they merge with the following user/tool messages instead of
+			// producing two adjacent user turns.
+			if len(assistantParts) == 0 {
+				continue
+			}
+			// Flush any accumulated user/tool parts before the model turn.
+			if len(gcpParts) > 0 {
+				gcpContents = append(gcpContents, genai.Content{Role: genai.RoleUser, Parts: gcpParts})
+				gcpParts = nil
+			}
+			// Coalesce consecutive model turns so Gemini's strict user/model turn
+			// alternation is preserved.
+			if n := len(gcpContents); n > 0 && gcpContents[n-1].Role == genai.RoleModel {
+				gcpContents[n-1].Parts = mergeGeminiModelParts(gcpContents[n-1].Parts, assistantParts)
+			} else {
+				gcpContents = append(gcpContents, genai.Content{Role: genai.RoleModel, Parts: assistantParts})
 			}
 		default:
 			return nil, nil, fmt.Errorf("%w: invalid role in message", internalapi.ErrInvalidRequestBody)

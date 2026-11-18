@@ -206,6 +206,35 @@ func TestOpenAIMessagesToGeminiContents(t *testing.T) {
 			},
 		},
 		{
+			name: "empty assistant between user messages merges the surrounding user turns",
+			messages: []openai.ChatCompletionMessageParamUnion{
+				{
+					OfUser: &openai.ChatCompletionUserMessageParam{
+						Role:    openai.ChatMessageRoleUser,
+						Content: openai.StringOrUserRoleContentUnion{Value: "a"},
+					},
+				},
+				{
+					OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+						Role:    openai.ChatMessageRoleAssistant,
+						Content: openai.StringOrAssistantRoleContentUnion{Value: ""},
+					},
+				},
+				{
+					OfUser: &openai.ChatCompletionUserMessageParam{
+						Role:    openai.ChatMessageRoleUser,
+						Content: openai.StringOrUserRoleContentUnion{Value: "b"},
+					},
+				},
+			},
+			expectedContents: []genai.Content{
+				{
+					Role:  genai.RoleUser,
+					Parts: []*genai.Part{{Text: "a"}, {Text: "b"}},
+				},
+			},
+		},
+		{
 			name: "mid-conversation system message is kept in chronological user turn while leading system stays in SystemInstruction",
 			messages: []openai.ChatCompletionMessageParamUnion{
 				{
